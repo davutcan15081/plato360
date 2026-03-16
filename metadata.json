@@ -1,0 +1,5 @@
+{
+  "name": "SpinEdit AI",
+  "description": "AI-powered 360-degree product video editor.",
+  "requestFramePermissions": ["camera", "microphone"]
+}
