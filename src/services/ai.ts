@@ -10,44 +10,6 @@ export interface EditSegment {
   frameStyle: string;
 }
 
-export async function generateDemoVideo(prompt: string): Promise<Blob> {
-  // Create a new instance right before the call to pick up the newly selected API key
-  const veoAi = new GoogleGenAI({ apiKey: process.env.API_KEY || process.env.GEMINI_API_KEY });
-  
-  let operation = await veoAi.models.generateVideos({
-    model: 'veo-3.1-fast-generate-preview',
-    prompt: prompt,
-    config: {
-      numberOfVideos: 1,
-      resolution: '720p',
-      aspectRatio: '9:16'
-    }
-  });
-
-  while (!operation.done) {
-    await new Promise(resolve => setTimeout(resolve, 10000));
-    operation = await veoAi.operations.getVideosOperation({ operation: operation });
-  }
-
-  const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
-  if (!downloadLink) {
-    throw new Error("Video generation failed or returned no URI.");
-  }
-
-  const response = await fetch(downloadLink, {
-    method: 'GET',
-    headers: {
-      'x-goog-api-key': process.env.API_KEY || process.env.GEMINI_API_KEY || '',
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to download video: ${response.statusText}`);
-  }
-
-  return await response.blob();
-}
-
 export async function generateVideoEditScript(videoBlob: Blob, vibe: string): Promise<EditSegment[]> {
   const base64Video = await blobToBase64(videoBlob);
   const mimeType = videoBlob.type || 'video/webm';
@@ -71,7 +33,7 @@ Each segment must have:
 - frameStyle: one of ['none', 'cinematic', 'polaroid', 'neon']`;
 
   const response = await ai.models.generateContent({
-    model: 'gemini-3.1-pro-preview',
+    model: 'gemini-2.5-flash',
     contents: [
       {
         inlineData: {

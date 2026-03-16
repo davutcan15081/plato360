@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { CameraRecorder } from './components/CameraRecorder';
 import { VideoPreview } from './components/VideoPreview';
-import { generateVideoEditScript, generateDemoVideo, EditSegment } from './services/ai';
+import { generateVideoEditScript, EditSegment } from './services/ai';
 import { motion, AnimatePresence } from 'motion/react';
-import { Sparkles, Video, Music, Wand2, Upload, Film } from 'lucide-react';
+import { Sparkles, Video, Music, Wand2, Upload } from 'lucide-react';
 
-type AppStep = 'setup' | 'recording' | 'processing' | 'preview' | 'generating';
+type AppStep = 'setup' | 'recording' | 'processing' | 'preview';
 
 const VIBES = ['Energetic', 'Cinematic', 'Minimalist', 'Cyberpunk'];
 
@@ -17,6 +17,11 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
 
   const handleRecordingComplete = async (blob: Blob) => {
+    if (blob.size === 0) {
+      setError("Recorded video is empty. Please try again.");
+      setStep('setup');
+      return;
+    }
     setVideoBlob(blob);
     setStep('processing');
     setError(null);
@@ -27,27 +32,6 @@ export default function App() {
     } catch (err) {
       console.error(err);
       setError("Failed to generate AI edit. Please try again.");
-      setStep('setup');
-    }
-  };
-
-  const handleGenerateDemo = async () => {
-    try {
-      // Check if API key is selected (required for Veo)
-      // @ts-ignore
-      if (window.aistudio && !await window.aistudio.hasSelectedApiKey()) {
-        // @ts-ignore
-        await window.aistudio.openSelectKey();
-      }
-
-      setStep('generating');
-      setError(null);
-
-      const blob = await generateDemoVideo('360 derece dönen bir platformda süs çiçekleri');
-      handleRecordingComplete(blob);
-    } catch (err) {
-      console.error(err);
-      setError("Failed to generate demo video. Please try again.");
       setStep('setup');
     }
   };
@@ -133,14 +117,6 @@ export default function App() {
                     Upload Video (Test)
                   </button>
                 </div>
-
-                <button
-                  onClick={handleGenerateDemo}
-                  className="w-full py-4 rounded-2xl bg-indigo-900/30 border border-indigo-500/30 text-indigo-300 font-bold text-lg flex items-center justify-center gap-3 hover:bg-indigo-900/50 transition-colors active:scale-95"
-                >
-                  <Film size={20} />
-                  Generate Demo Video
-                </button>
               </div>
             </div>
           </motion.div>
@@ -155,31 +131,6 @@ export default function App() {
             className="h-full w-full"
           >
             <CameraRecorder onRecordingComplete={handleRecordingComplete} maxDuration={10} />
-          </motion.div>
-        )}
-
-        {step === 'generating' && (
-          <motion.div 
-            key="generating"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="h-full flex flex-col items-center justify-center p-6"
-          >
-            <div className="relative w-24 h-24 mb-8">
-              <div className="absolute inset-0 border-4 border-zinc-800 rounded-full"></div>
-              <div className="absolute inset-0 border-4 border-indigo-500 rounded-full border-t-transparent animate-spin"></div>
-              <div className="absolute inset-0 flex items-center justify-center">
-                <Film size={32} className="text-indigo-400 animate-pulse" />
-              </div>
-            </div>
-            <h2 className="text-2xl font-bold mb-2 text-center">Generating Video...</h2>
-            <p className="text-zinc-400 text-center max-w-xs mb-4">
-              Creating a 360° demo video using Veo 3. This may take a few minutes.
-            </p>
-            <div className="text-xs text-zinc-500 bg-zinc-900/50 px-4 py-2 rounded-lg border border-zinc-800">
-              Prompt: "360 derece dönen bir platformda süs çiçekleri"
-            </div>
           </motion.div>
         )}
 

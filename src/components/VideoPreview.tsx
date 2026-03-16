@@ -17,10 +17,10 @@ interface UserText {
 }
 
 const VIBE_AUDIO: Record<string, string> = {
-  'Energetic': 'https://cdn.pixabay.com/download/audio/2022/01/18/audio_d0a13f69d2.mp3?filename=electronic-rock-king-around-here-15045.mp3',
-  'Cinematic': 'https://cdn.pixabay.com/download/audio/2022/11/22/audio_8bea359842.mp3?filename=cinematic-time-lapse-115672.mp3',
-  'Minimalist': 'https://cdn.pixabay.com/download/audio/2021/08/09/audio_88447e769f.mp3?filename=ambient-piano-amp-strings-10711.mp3',
-  'Cyberpunk': 'https://cdn.pixabay.com/download/audio/2022/03/15/audio_c8c8a73467.mp3?filename=cyberpunk-2099-10701.mp3'
+  'Energetic': 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
+  'Cinematic': 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3',
+  'Minimalist': 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3',
+  'Cyberpunk': 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3'
 };
 
 const FONTS = ['inter', 'anton', 'caveat', 'playfair', 'space', 'bebas', 'pacifico', 'cinzel', 'marker', 'righteous', 'oswald'];
@@ -150,15 +150,17 @@ export function VideoPreview({ videoBlob, editScript, vibe, onReset }: VideoPrev
             className="absolute inset-0 w-full h-full object-fill pointer-events-none z-20" 
           />
         )}
-        <video
-          ref={videoRef}
-          src={videoUrl || undefined}
-          className="w-full h-full object-cover transition-all duration-300"
-          style={{ filter: currentSegment?.cssFilter && currentSegment.cssFilter !== 'none' ? currentSegment.cssFilter : 'none' }}
-          onEnded={handleVideoEnded}
-          playsInline
-          muted // Mute original video audio
-        />
+        {videoUrl && (
+          <video
+            ref={videoRef}
+            src={videoUrl}
+            className="w-full h-full object-cover transition-all duration-300"
+            style={{ filter: currentSegment?.cssFilter && currentSegment.cssFilter !== 'none' ? currentSegment.cssFilter : 'none' }}
+            onEnded={handleVideoEnded}
+            playsInline
+            muted // Mute original video audio
+          />
+        )}
         
         {/* User Draggable Texts */}
         <AnimatePresence>

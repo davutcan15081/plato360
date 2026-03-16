@@ -78,6 +78,11 @@ export function CameraRecorder({ onRecordingComplete, maxDuration = 10 }: Camera
 
   const stopRecording = useCallback(() => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      try {
+        mediaRecorderRef.current.requestData();
+      } catch (e) {
+        // Ignore if requestData fails
+      }
       mediaRecorderRef.current.stop();
       setIsRecording(false);
     }
