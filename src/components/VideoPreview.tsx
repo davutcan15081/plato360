@@ -165,15 +165,16 @@ export function VideoPreview({ videoBlob, editScript, vibe, onReset }: VideoPrev
           {userTexts.map(t => (
             <motion.div
               key={t.id}
-              initial={{ opacity: 0, scale: 0.5 }}
+              initial={{ opacity: 0, scale: 0.8, filter: 'blur(4px)' }}
               animate={{ 
                 opacity: 1, 
-                scale: selectedTextId === t.id ? 1.05 : 1 
+                scale: selectedTextId === t.id ? 1.05 : 1,
+                filter: 'blur(0px)'
               }}
-              exit={{ opacity: 0, scale: 0.5 }}
+              exit={{ opacity: 0, scale: 0.8, filter: 'blur(4px)' }}
               whileHover={{ scale: selectedTextId === t.id ? 1.05 : 1.02 }}
               whileTap={{ scale: 0.95 }}
-              transition={{ type: "spring", stiffness: 300, damping: 20 }}
+              transition={{ type: "spring", stiffness: 400, damping: 25 }}
               drag
               dragMomentum={false}
               onClick={(e) => {
@@ -182,12 +183,23 @@ export function VideoPreview({ videoBlob, editScript, vibe, onReset }: VideoPrev
               }}
               className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 cursor-move p-2 rounded-lg z-30 transition-colors ${selectedTextId === t.id ? 'ring-2 ring-white/50 bg-white/10 backdrop-blur-sm shadow-xl' : 'hover:bg-white/5'}`}
             >
-              <h2 
-                className={`text-4xl md:text-5xl text-white text-center drop-shadow-[0_4px_10px_rgba(0,0,0,0.8)] whitespace-nowrap ${getFontClass(t.fontFamily)}`}
+              <motion.h2 
+                animate={{
+                  y: selectedTextId === t.id ? [0, -4, 0] : [0, -2, 0],
+                  textShadow: selectedTextId === t.id 
+                    ? "0px 8px 20px rgba(0,0,0,0.9)" 
+                    : "0px 4px 10px rgba(0,0,0,0.8)"
+                }}
+                transition={{
+                  duration: selectedTextId === t.id ? 2 : 3,
+                  repeat: Infinity,
+                  ease: "easeInOut"
+                }}
+                className={`text-4xl md:text-5xl text-white text-center whitespace-nowrap ${getFontClass(t.fontFamily)}`}
                 style={{ WebkitTextStroke: '1px rgba(0,0,0,0.5)' }}
               >
                 {t.text}
-              </h2>
+              </motion.h2>
             </motion.div>
           ))}
         </AnimatePresence>
