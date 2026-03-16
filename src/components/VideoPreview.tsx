@@ -23,7 +23,7 @@ const VIBE_AUDIO: Record<string, string> = {
   'Cyberpunk': 'https://cdn.pixabay.com/download/audio/2022/03/15/audio_c8c8a73467.mp3?filename=cyberpunk-2099-10701.mp3'
 };
 
-const FONTS = ['inter', 'anton', 'caveat', 'playfair', 'space'];
+const FONTS = ['inter', 'anton', 'caveat', 'playfair', 'space', 'bebas', 'pacifico', 'cinzel', 'marker', 'righteous', 'oswald'];
 
 export function VideoPreview({ videoBlob, editScript, vibe, onReset }: VideoPreviewProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -122,6 +122,12 @@ export function VideoPreview({ videoBlob, editScript, vibe, onReset }: VideoPrev
       case 'caveat': return 'font-["Caveat"] text-5xl md:text-6xl capitalize';
       case 'playfair': return 'font-["Playfair_Display"] italic capitalize';
       case 'space': return 'font-["Space_Grotesk"] tracking-tighter uppercase';
+      case 'bebas': return 'font-["Bebas_Neue"] tracking-wider text-5xl md:text-6xl uppercase';
+      case 'pacifico': return 'font-["Pacifico"] text-4xl md:text-5xl capitalize font-normal';
+      case 'cinzel': return 'font-["Cinzel"] tracking-widest uppercase font-bold';
+      case 'marker': return 'font-["Permanent_Marker"] text-4xl md:text-5xl uppercase';
+      case 'righteous': return 'font-["Righteous"] tracking-wide uppercase';
+      case 'oswald': return 'font-["Oswald"] tracking-tight uppercase font-bold';
       case 'inter':
       default: return 'font-["Inter"] font-black tracking-tighter uppercase';
     }
@@ -155,25 +161,36 @@ export function VideoPreview({ videoBlob, editScript, vibe, onReset }: VideoPrev
         />
         
         {/* User Draggable Texts */}
-        {userTexts.map(t => (
-          <motion.div
-            key={t.id}
-            drag
-            dragMomentum={false}
-            onClick={(e) => {
-              e.stopPropagation();
-              setSelectedTextId(t.id);
-            }}
-            className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 cursor-move p-2 rounded-lg z-30 ${selectedTextId === t.id ? 'ring-2 ring-white/50 bg-white/10 backdrop-blur-sm' : ''}`}
-          >
-            <h2 
-              className={`text-4xl md:text-5xl text-white text-center drop-shadow-[0_4px_10px_rgba(0,0,0,0.8)] whitespace-nowrap ${getFontClass(t.fontFamily)}`}
-              style={{ WebkitTextStroke: '1px rgba(0,0,0,0.5)' }}
+        <AnimatePresence>
+          {userTexts.map(t => (
+            <motion.div
+              key={t.id}
+              initial={{ opacity: 0, scale: 0.5 }}
+              animate={{ 
+                opacity: 1, 
+                scale: selectedTextId === t.id ? 1.05 : 1 
+              }}
+              exit={{ opacity: 0, scale: 0.5 }}
+              whileHover={{ scale: selectedTextId === t.id ? 1.05 : 1.02 }}
+              whileTap={{ scale: 0.95 }}
+              transition={{ type: "spring", stiffness: 300, damping: 20 }}
+              drag
+              dragMomentum={false}
+              onClick={(e) => {
+                e.stopPropagation();
+                setSelectedTextId(t.id);
+              }}
+              className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 cursor-move p-2 rounded-lg z-30 transition-colors ${selectedTextId === t.id ? 'ring-2 ring-white/50 bg-white/10 backdrop-blur-sm shadow-xl' : 'hover:bg-white/5'}`}
             >
-              {t.text}
-            </h2>
-          </motion.div>
-        ))}
+              <h2 
+                className={`text-4xl md:text-5xl text-white text-center drop-shadow-[0_4px_10px_rgba(0,0,0,0.8)] whitespace-nowrap ${getFontClass(t.fontFamily)}`}
+                style={{ WebkitTextStroke: '1px rgba(0,0,0,0.5)' }}
+              >
+                {t.text}
+              </h2>
+            </motion.div>
+          ))}
+        </AnimatePresence>
       </div>
 
       {/* Text Edit Controls */}
@@ -267,9 +284,9 @@ export function VideoPreview({ videoBlob, editScript, vibe, onReset }: VideoPrev
                 </button>
               ))}
 
-              <label className="flex items-center justify-center px-4 py-2 rounded-xl bg-white/10 text-zinc-300 hover:bg-white/20 cursor-pointer shrink-0 transition-colors text-sm">
-                <input type="file" accept="image/*" className="hidden" onChange={handleCustomFrameUpload} />
-                + Yükle
+              <label className="flex items-center justify-center px-4 py-2 rounded-xl bg-white/10 text-zinc-300 hover:bg-white/20 cursor-pointer shrink-0 transition-colors text-sm font-medium border border-dashed border-white/30">
+                <input type="file" accept="image/png, image/webp, image/gif" className="hidden" onChange={handleCustomFrameUpload} />
+                + Şeffaf Çerçeve Yükle (PNG)
               </label>
             </div>
           </motion.div>
