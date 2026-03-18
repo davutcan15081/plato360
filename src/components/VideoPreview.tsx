@@ -308,7 +308,10 @@ export function VideoPreview({ videoBlob, editScript, vibe, onReset }: VideoPrev
       </AnimatePresence>
 
       {/* Bottom Controls */}
-      <div className="absolute bottom-8 left-0 right-0 flex justify-center items-center gap-4 px-6">
+      <div 
+        className="absolute bottom-8 left-0 right-0 flex justify-center items-center gap-4 px-6 z-40"
+        style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+      >
         <button onClick={onReset} className="p-4 rounded-full bg-zinc-800/80 text-zinc-300 backdrop-blur-md hover:bg-zinc-700 hover:text-white transition-colors">
           <RotateCcw size={24} />
         </button>

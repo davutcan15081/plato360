@@ -1,0 +1,11 @@
+{
+	"appId": "com.example.app",
+	"appName": "react-example",
+	"webDir": "dist",
+	"packageClassList": [
+		"AppPlugin",
+		"HapticsPlugin",
+		"KeyboardPlugin",
+		"StatusBarPlugin"
+	]
+}

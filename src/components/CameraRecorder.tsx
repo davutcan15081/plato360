@@ -1,4 +1,5 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
+import { Haptics, ImpactStyle } from '@capacitor/haptics';
 
 interface CameraRecorderProps {
   onRecordingComplete: (blob: Blob) => void;
@@ -36,7 +37,10 @@ export function CameraRecorder({ onRecordingComplete, maxDuration = 10 }: Camera
     };
   }, []);
 
-  const startRecording = useCallback(() => {
+  const startRecording = useCallback(async () => {
+    try {
+      await Haptics.impact({ style: ImpactStyle.Medium });
+    } catch (e) {}
     if (!videoRef.current || !videoRef.current.srcObject) return;
     
     const stream = videoRef.current.srcObject as MediaStream;
@@ -76,7 +80,10 @@ export function CameraRecorder({ onRecordingComplete, maxDuration = 10 }: Camera
     setTimeLeft(maxDuration);
   }, [maxDuration, onRecordingComplete]);
 
-  const stopRecording = useCallback(() => {
+  const stopRecording = useCallback(async () => {
+    try {
+      await Haptics.impact({ style: ImpactStyle.Light });
+    } catch (e) {}
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
       try {
         mediaRecorderRef.current.requestData();

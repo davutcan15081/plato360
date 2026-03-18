@@ -1,9 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { CameraRecorder } from './components/CameraRecorder';
 import { VideoPreview } from './components/VideoPreview';
 import { generateVideoEditScript, EditSegment } from './services/ai';
 import { motion, AnimatePresence } from 'motion/react';
 import { Sparkles, Video, Music, Wand2, Upload } from 'lucide-react';
+import { Capacitor } from '@capacitor/core';
+import { App as CapacitorApp } from '@capacitor/app';
+import { StatusBar, Style } from '@capacitor/status-bar';
+import { Haptics, ImpactStyle } from '@capacitor/haptics';
 
 type AppStep = 'setup' | 'recording' | 'processing' | 'preview';
 
@@ -15,6 +19,34 @@ export default function App() {
   const [videoBlob, setVideoBlob] = useState<Blob | null>(null);
   const [editScript, setEditScript] = useState<EditSegment[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const initCapacitor = async () => {
+      if (Capacitor.isNativePlatform()) {
+        try {
+          await StatusBar.setStyle({ style: Style.Dark });
+          await StatusBar.setBackgroundColor({ color: '#09090b' });
+        } catch (e) {
+          console.warn('Status bar not available', e);
+        }
+
+        CapacitorApp.addListener('backButton', ({ canGoBack }) => {
+          if (!canGoBack) {
+            CapacitorApp.exitApp();
+          } else {
+            window.history.back();
+          }
+        });
+      }
+    };
+    initCapacitor();
+    
+    return () => {
+      if (Capacitor.isNativePlatform()) {
+        CapacitorApp.removeAllListeners();
+      }
+    };
+  }, []);
 
   const handleRecordingComplete = async (blob: Blob) => {
     if (blob.size === 0) {
@@ -29,6 +61,9 @@ export default function App() {
       const script = await generateVideoEditScript(blob, vibe);
       setEditScript(script);
       setStep('preview');
+      try {
+        await Haptics.impact({ style: ImpactStyle.Heavy });
+      } catch (e) {}
     } catch (err) {
       console.error(err);
       setError("Failed to generate AI edit. Please try again.");
@@ -41,6 +76,20 @@ export default function App() {
     setVideoBlob(null);
     setEditScript(null);
     setError(null);
+  };
+
+  const handleVibeSelect = async (v: string) => {
+    setVibe(v);
+    try {
+      await Haptics.impact({ style: ImpactStyle.Light });
+    } catch (e) {}
+  };
+
+  const handleStartRecording = async () => {
+    setStep('recording');
+    try {
+      await Haptics.impact({ style: ImpactStyle.Medium });
+    } catch (e) {}
   };
 
   return (
@@ -70,7 +119,7 @@ export default function App() {
                   {VIBES.map(v => (
                     <button
                       key={v}
-                      onClick={() => setVibe(v)}
+                      onClick={() => handleVibeSelect(v)}
                       className={`p-4 rounded-2xl border text-left transition-all ${
                         vibe === v 
                           ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' 
@@ -91,7 +140,7 @@ export default function App() {
 
               <div className="flex flex-col gap-3">
                 <button
-                  onClick={() => setStep('recording')}
+                  onClick={handleStartRecording}
                   className="w-full py-5 rounded-2xl bg-white text-black font-bold text-lg flex items-center justify-center gap-3 hover:bg-zinc-200 transition-colors active:scale-95"
                 >
                   <Video size={24} />
