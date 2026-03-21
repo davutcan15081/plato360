@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { CameraRecorder } from './components/CameraRecorder';
 import { VideoPreview } from './components/VideoPreview';
-import { generateVideoEditScript, EditSegment } from './services/ai';
+import { generateVideoEditScript, generateAutoMagicEdit, EditSegment, AutoMagicResult } from './services/ai';
 import { motion, AnimatePresence } from 'motion/react';
-import { Sparkles, Video, Music, Wand2, Upload } from 'lucide-react';
+import { Sparkles, Video, Music, Wand2, Upload, Zap } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
 import { App as CapacitorApp } from '@capacitor/app';
 import { StatusBar, Style } from '@capacitor/status-bar';
@@ -11,14 +11,16 @@ import { Haptics, ImpactStyle } from '@capacitor/haptics';
 
 type AppStep = 'setup' | 'recording' | 'processing' | 'preview';
 
-const VIBES = ['Energetic', 'Cinematic', 'Minimalist', 'Cyberpunk'];
+const VIBES = ['Auto Magic', 'Energetic', 'Cinematic', 'Minimalist', 'Cyberpunk'];
 
 export default function App() {
   const [step, setStep] = useState<AppStep>('setup');
   const [vibe, setVibe] = useState<string>(VIBES[0]);
   const [videoBlob, setVideoBlob] = useState<Blob | null>(null);
   const [editScript, setEditScript] = useState<EditSegment[] | null>(null);
+  const [initialTexts, setInitialTexts] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [isAutoMagic, setIsAutoMagic] = useState(false);
 
   useEffect(() => {
     const initCapacitor = async () => {
@@ -48,7 +50,7 @@ export default function App() {
     };
   }, []);
 
-  const handleRecordingComplete = async (blob: Blob) => {
+  const handleRecordingComplete = async (blob: Blob, forceAutoMagic: boolean = false) => {
     if (blob.size === 0) {
       setError("Recorded video is empty. Please try again.");
       setStep('setup');
@@ -57,9 +59,19 @@ export default function App() {
     setVideoBlob(blob);
     setStep('processing');
     setError(null);
+    const useAutoMagic = forceAutoMagic || vibe === 'Auto Magic';
+    setIsAutoMagic(useAutoMagic);
     try {
-      const script = await generateVideoEditScript(blob, vibe);
-      setEditScript(script);
+      if (useAutoMagic) {
+        const result = await generateAutoMagicEdit(blob);
+        setVibe(result.vibe);
+        setEditScript(result.editScript);
+        setInitialTexts(result.texts);
+      } else {
+        const script = await generateVideoEditScript(blob, vibe);
+        setEditScript(script);
+        setInitialTexts([]);
+      }
       setStep('preview');
       try {
         await Haptics.impact({ style: ImpactStyle.Heavy });
@@ -75,7 +87,9 @@ export default function App() {
     setStep('setup');
     setVideoBlob(null);
     setEditScript(null);
+    setInitialTexts([]);
     setError(null);
+    setIsAutoMagic(false);
   };
 
   const handleVibeSelect = async (v: string) => {
@@ -122,11 +136,14 @@ export default function App() {
                       onClick={() => handleVibeSelect(v)}
                       className={`p-4 rounded-2xl border text-left transition-all ${
                         vibe === v 
-                          ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' 
+                          ? (v === 'Auto Magic' ? 'border-purple-500 bg-purple-500/20 text-purple-300' : 'border-indigo-500 bg-indigo-500/10 text-indigo-300')
                           : 'border-zinc-800 bg-zinc-900/50 text-zinc-400 hover:bg-zinc-800'
                       }`}
                     >
-                      <span className="font-medium">{v}</span>
+                      <span className="font-medium flex items-center gap-2">
+                        {v === 'Auto Magic' && <Zap size={16} className="text-yellow-400" />}
+                        {v}
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -138,35 +155,46 @@ export default function App() {
                 </div>
               )}
 
-              <div className="flex flex-col gap-3">
-                <button
-                  onClick={handleStartRecording}
-                  className="w-full py-5 rounded-2xl bg-white text-black font-bold text-lg flex items-center justify-center gap-3 hover:bg-zinc-200 transition-colors active:scale-95"
-                >
-                  <Video size={24} />
-                  Start Recording
-                </button>
-
-                <div className="relative w-full">
-                  <input
-                    type="file"
-                    accept="video/*"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) {
-                        handleRecordingComplete(file);
-                      }
-                    }}
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                  />
+                <div className="flex flex-col gap-3">
                   <button
-                    className="w-full py-4 rounded-2xl bg-zinc-900 border border-zinc-800 text-zinc-300 font-bold text-lg flex items-center justify-center gap-3 hover:bg-zinc-800 transition-colors active:scale-95"
+                    onClick={() => {
+                      setVibe('Auto Magic');
+                      handleStartRecording();
+                    }}
+                    className="w-full py-5 rounded-2xl bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-bold text-lg flex items-center justify-center gap-3 hover:opacity-90 transition-opacity shadow-lg shadow-indigo-500/20 active:scale-95"
                   >
-                    <Upload size={20} />
-                    Upload Video (Test)
+                    <Zap size={24} className="text-yellow-300" />
+                    Otomatik Sihirli Çekim
                   </button>
+
+                  <button
+                    onClick={handleStartRecording}
+                    className="w-full py-4 rounded-2xl bg-white text-black font-bold text-lg flex items-center justify-center gap-3 hover:bg-zinc-200 transition-colors active:scale-95"
+                  >
+                    <Video size={20} />
+                    Normal Çekim
+                  </button>
+
+                  <div className="relative w-full">
+                    <input
+                      type="file"
+                      accept="video/*"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          handleRecordingComplete(file, false);
+                        }
+                      }}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                    />
+                    <button
+                      className="w-full py-4 rounded-2xl bg-zinc-900 border border-zinc-800 text-zinc-300 font-bold text-lg flex items-center justify-center gap-3 hover:bg-zinc-800 transition-colors active:scale-95"
+                    >
+                      <Upload size={20} />
+                      Video Yükle
+                    </button>
+                  </div>
                 </div>
-              </div>
             </div>
           </motion.div>
         )}
@@ -179,7 +207,11 @@ export default function App() {
             exit={{ opacity: 0 }}
             className="h-full w-full"
           >
-            <CameraRecorder onRecordingComplete={handleRecordingComplete} maxDuration={10} />
+            <CameraRecorder 
+              onRecordingComplete={handleRecordingComplete} 
+              onCancel={() => setStep('setup')}
+              maxDuration={10} 
+            />
           </motion.div>
         )}
 
@@ -200,7 +232,9 @@ export default function App() {
             </div>
             <h2 className="text-2xl font-bold mb-2 text-center">AI is editing...</h2>
             <p className="text-zinc-400 text-center max-w-xs">
-              Analyzing your 360° product video and applying the {vibe.toLowerCase()} vibe.
+              {isAutoMagic 
+                ? "Analyzing video, choosing the best vibe, and generating promotional texts..."
+                : `Analyzing your 360° product video and applying the ${vibe.toLowerCase()} vibe.`}
             </p>
           </motion.div>
         )}
@@ -217,6 +251,7 @@ export default function App() {
               videoBlob={videoBlob} 
               editScript={editScript} 
               vibe={vibe}
+              initialTexts={initialTexts}
               onReset={reset}
             />
           </motion.div>

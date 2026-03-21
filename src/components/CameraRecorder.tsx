@@ -3,20 +3,26 @@ import { Haptics, ImpactStyle } from '@capacitor/haptics';
 
 interface CameraRecorderProps {
   onRecordingComplete: (blob: Blob) => void;
+  onCancel: () => void;
   maxDuration?: number;
 }
 
-export function CameraRecorder({ onRecordingComplete, maxDuration = 10 }: CameraRecorderProps) {
+export function CameraRecorder({ onRecordingComplete, onCancel, maxDuration = 10 }: CameraRecorderProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [timeLeft, setTimeLeft] = useState(maxDuration);
   const chunksRef = useRef<Blob[]>([]);
 
+  const [cameraError, setCameraError] = useState<string | null>(null);
+
   useEffect(() => {
     let stream: MediaStream | null = null;
     async function setupCamera() {
       try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error("Camera API is not supported in this browser.");
+        }
         stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
           audio: false
@@ -24,9 +30,20 @@ export function CameraRecorder({ onRecordingComplete, maxDuration = 10 }: Camera
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
         }
-      } catch (err) {
-        console.error("Error accessing camera:", err);
-        alert("Camera access is required to record product videos.");
+      } catch (err: any) {
+        console.warn("Failed with environment camera, trying any camera...", err);
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: false
+          });
+          if (videoRef.current) {
+            videoRef.current.srcObject = stream;
+          }
+        } catch (fallbackErr: any) {
+          console.error("Error accessing camera:", fallbackErr);
+          setCameraError(fallbackErr.message || "Permission denied");
+        }
       }
     }
     setupCamera();
@@ -45,11 +62,21 @@ export function CameraRecorder({ onRecordingComplete, maxDuration = 10 }: Camera
     
     const stream = videoRef.current.srcObject as MediaStream;
     
-    let options = { mimeType: 'video/webm;codecs=vp9' };
-    if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-      options = { mimeType: 'video/webm' };
-      if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-        options = { mimeType: 'video/mp4' }; // Fallback for iOS Safari
+    let options: MediaRecorderOptions = {};
+    const mimeTypes = [
+      'video/mp4;codecs=avc1,mp4a.40.2',
+      'video/mp4',
+      'video/webm;codecs=vp9,vorbis',
+      'video/webm;codecs=vp8,vorbis',
+      'video/webm;codecs=vp9,opus',
+      'video/webm;codecs=vp8,opus',
+      'video/webm'
+    ];
+    
+    for (const type of mimeTypes) {
+      if (MediaRecorder.isTypeSupported(type)) {
+        options.mimeType = type;
+        break;
       }
     }
 
@@ -64,18 +91,23 @@ export function CameraRecorder({ onRecordingComplete, maxDuration = 10 }: Camera
     chunksRef.current = [];
 
     mediaRecorder.ondataavailable = (e) => {
-      if (e.data.size > 0) {
+      if (e.data && e.data.size > 0) {
         chunksRef.current.push(e.data);
       }
     };
 
     mediaRecorder.onstop = () => {
-      const mimeType = mediaRecorder.mimeType || 'video/mp4';
-      const blob = new Blob(chunksRef.current, { type: mimeType });
+      const type = chunksRef.current[0]?.type || mediaRecorder.mimeType || options.mimeType || 'video/mp4';
+      const blob = new Blob(chunksRef.current, { type });
+      if (blob.size === 0) {
+        console.error("Recording failed: empty blob");
+        setCameraError("Recording failed. Please try again.");
+        return;
+      }
       onRecordingComplete(blob);
     };
 
-    mediaRecorder.start();
+    mediaRecorder.start(500); // Collect data every 500ms
     setIsRecording(true);
     setTimeLeft(maxDuration);
   }, [maxDuration, onRecordingComplete]);
@@ -84,12 +116,7 @@ export function CameraRecorder({ onRecordingComplete, maxDuration = 10 }: Camera
     try {
       await Haptics.impact({ style: ImpactStyle.Light });
     } catch (e) {}
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-      try {
-        mediaRecorderRef.current.requestData();
-      } catch (e) {
-        // Ignore if requestData fails
-      }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
     }
@@ -109,17 +136,43 @@ export function CameraRecorder({ onRecordingComplete, maxDuration = 10 }: Camera
 
   return (
     <div className="relative w-full h-full bg-black flex flex-col">
-      <video 
-        ref={videoRef} 
-        autoPlay 
-        playsInline 
-        muted 
-        className="flex-1 object-cover w-full h-full"
-      />
+      {cameraError ? (
+        <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
+          <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mb-4">
+            <span className="text-red-500 text-2xl">!</span>
+          </div>
+          <h2 className="text-xl font-bold text-white mb-2">Camera Access Denied</h2>
+          <p className="text-zinc-400 mb-6">{cameraError}</p>
+          <p className="text-sm text-zinc-500 mb-8">
+            Please allow camera access in your browser settings and try again.
+          </p>
+          <button 
+            onClick={onCancel}
+            className="px-6 py-3 bg-white text-black font-bold rounded-xl hover:bg-zinc-200 transition-colors"
+          >
+            Go Back
+          </button>
+        </div>
+      ) : (
+        <video 
+          ref={videoRef} 
+          autoPlay 
+          playsInline 
+          muted 
+          className="flex-1 object-cover w-full h-full"
+        />
+      )}
       
       {/* Overlay UI */}
-      <div className="absolute inset-0 flex flex-col justify-between p-6 pointer-events-none">
+      {!cameraError && (
+        <div className="absolute inset-0 flex flex-col justify-between p-6 pointer-events-none">
         <div className="flex justify-between items-center mt-4">
+          <button 
+            onClick={onCancel}
+            className="pointer-events-auto bg-black/50 text-white px-4 py-2 rounded-full font-medium text-sm backdrop-blur-md border border-white/10 hover:bg-black/70 transition-colors"
+          >
+            Cancel
+          </button>
           <div className="bg-black/50 text-white px-4 py-1.5 rounded-full font-mono text-sm backdrop-blur-md border border-white/10">
             00:{timeLeft.toString().padStart(2, '0')}
           </div>
@@ -148,7 +201,8 @@ export function CameraRecorder({ onRecordingComplete, maxDuration = 10 }: Camera
             </button>
           )}
         </div>
-      </div>
+        </div>
+      )}
     </div>
   );
 }

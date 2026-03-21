@@ -1,12 +1,16 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { EditSegment } from '../services/ai';
-import { Play, Pause, RotateCcw, Share, Type, Trash2, Check, Frame } from 'lucide-react';
+import { Play, Pause, RotateCcw, Share, Type, Trash2, Check, Frame, Download, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Share as CapShare } from '@capacitor/share';
+import { Capacitor } from '@capacitor/core';
 
 interface VideoPreviewProps {
   videoBlob: Blob;
   editScript: EditSegment[];
   vibe: string;
+  initialTexts?: any[];
   onReset: () => void;
 }
 
@@ -14,30 +18,84 @@ interface UserText {
   id: string;
   text: string;
   fontFamily: string;
+  startTime?: number;
+  endTime?: number;
+  yOffset?: number;
 }
 
 const VIBE_AUDIO: Record<string, string> = {
-  'Energetic': 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
-  'Cinematic': 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3',
-  'Minimalist': 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3',
-  'Cyberpunk': 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3'
+  'Energetic': 'https://raw.githubusercontent.com/photonstorm/phaser3-examples/master/public/assets/audio/bodenstaendig_2000_in_rock_4bit.mp3',
+  'Cinematic': 'https://raw.githubusercontent.com/photonstorm/phaser3-examples/master/public/assets/audio/CatAstroPhi_shmup_normal.mp3',
+  'Minimalist': 'https://raw.githubusercontent.com/photonstorm/phaser3-examples/master/public/assets/audio/tech/bass.mp3',
+  'Cyberpunk': 'https://raw.githubusercontent.com/photonstorm/phaser3-examples/master/public/assets/audio/oedipus_wizball_highscore.mp3'
 };
 
 const FONTS = ['inter', 'anton', 'caveat', 'playfair', 'space', 'bebas', 'pacifico', 'cinzel', 'marker', 'righteous', 'oswald'];
 
-export function VideoPreview({ videoBlob, editScript, vibe, onReset }: VideoPreviewProps) {
+export function VideoPreview({ videoBlob, editScript, vibe, initialTexts = [], onReset }: VideoPreviewProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const audioDestRef = useRef<MediaStreamAudioDestinationNode | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentSegment, setCurrentSegment] = useState<EditSegment | null>(null);
+  const currentSegmentRef = useRef<EditSegment | null>(null);
+  const [visibleTexts, setVisibleTexts] = useState<UserText[]>([]);
+  const visibleTextsRef = useRef<string>('');
+
+  const initAudioContext = () => {
+    try {
+      if (!audioCtxRef.current && audioRef.current) {
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        const ctx = new AudioContextClass();
+        audioCtxRef.current = ctx;
+        
+        const source = ctx.createMediaElementSource(audioRef.current);
+        const dest = ctx.createMediaStreamDestination();
+        
+        source.connect(dest);
+        source.connect(ctx.destination);
+        audioDestRef.current = dest;
+      }
+      if (audioCtxRef.current?.state === 'suspended') {
+        audioCtxRef.current.resume();
+      }
+    } catch (e) {
+      console.warn("Audio context initialization failed", e);
+    }
+  };
   const [videoUrl, setVideoUrl] = useState<string>('');
   
-  const [userTexts, setUserTexts] = useState<UserText[]>([]);
+  const [userTexts, setUserTexts] = useState<UserText[]>(() => {
+    return initialTexts.map((t, i) => ({
+      id: `auto-${i}`,
+      text: t.text,
+      fontFamily: t.fontFamily || 'inter',
+      startTime: t.startTime,
+      endTime: t.endTime,
+      yOffset: t.yOffset || 0
+    }));
+  });
+
+  // Initialize visible texts on mount or when userTexts change
+  useEffect(() => {
+    if (videoRef.current) {
+      const time = videoRef.current.currentTime;
+      const currentVisibleTexts = userTexts.filter(t => t.startTime === undefined || (time >= t.startTime && time <= t.endTime));
+      setVisibleTexts(currentVisibleTexts);
+      visibleTextsRef.current = currentVisibleTexts.map(t => t.id).join(',');
+    } else {
+      setVisibleTexts(userTexts.filter(t => t.startTime === undefined || (0 >= t.startTime && 0 <= t.endTime)));
+    }
+  }, [userTexts]);
   const [selectedTextId, setSelectedTextId] = useState<string | null>(null);
 
   const [activeFrame, setActiveFrame] = useState<string>(editScript[0]?.frameStyle || 'none');
   const [customFrames, setCustomFrames] = useState<string[]>([]);
   const [showFrameMenu, setShowFrameMenu] = useState(false);
+
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState(0);
 
   const handleCustomFrameUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -56,18 +114,38 @@ export function VideoPreview({ videoBlob, editScript, vibe, onReset }: VideoPrev
 
   useEffect(() => {
     let animationFrameId: number;
+    let lastPlaybackRate = -1;
     
     const checkTime = () => {
       if (videoRef.current) {
         const time = videoRef.current.currentTime;
+        
         const segment = editScript.find(s => time >= s.startTime && time <= s.endTime) || editScript[editScript.length - 1];
         
         if (segment) {
-          setCurrentSegment(segment);
-          // Apply playback rate
-          if (videoRef.current.playbackRate !== segment.playbackRate) {
-            videoRef.current.playbackRate = segment.playbackRate;
+          if (segment !== currentSegmentRef.current) {
+            setCurrentSegment(segment);
+            currentSegmentRef.current = segment;
           }
+
+          // Apply playback rate
+          let rate = segment.playbackRate;
+          if (typeof rate !== 'number' || isNaN(rate) || rate <= 0) rate = 1;
+          if (rate < 0.5) rate = 0.5;
+          if (rate > 5.0) rate = 5.0;
+
+          if (lastPlaybackRate !== rate) {
+            videoRef.current.playbackRate = rate;
+            lastPlaybackRate = rate;
+          }
+        }
+
+        // Update visible texts
+        const currentVisibleTexts = userTexts.filter(t => t.startTime === undefined || (time >= t.startTime && time <= t.endTime));
+        const visibleIds = currentVisibleTexts.map(t => t.id).join(',');
+        if (visibleIds !== visibleTextsRef.current) {
+          setVisibleTexts(currentVisibleTexts);
+          visibleTextsRef.current = visibleIds;
         }
       }
       animationFrameId = requestAnimationFrame(checkTime);
@@ -75,9 +153,10 @@ export function VideoPreview({ videoBlob, editScript, vibe, onReset }: VideoPrev
 
     animationFrameId = requestAnimationFrame(checkTime);
     return () => cancelAnimationFrame(animationFrameId);
-  }, [editScript]);
+  }, [editScript, isExporting]);
 
   const togglePlay = () => {
+    initAudioContext();
     if (videoRef.current && audioRef.current) {
       if (isPlaying) {
         videoRef.current.pause();
@@ -91,10 +170,12 @@ export function VideoPreview({ videoBlob, editScript, vibe, onReset }: VideoPrev
   };
 
   const handleVideoEnded = () => {
-    setIsPlaying(false);
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
+    if (!isExporting) {
+      setIsPlaying(false);
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
+      }
     }
   };
 
@@ -103,6 +184,222 @@ export function VideoPreview({ videoBlob, editScript, vibe, onReset }: VideoPrev
     setUserTexts([...userTexts, { id: newId, text: 'YENİ METİN', fontFamily: 'inter' }]);
     setSelectedTextId(newId);
     setShowFrameMenu(false);
+  };
+
+  const exportVideo = async () => {
+    if (!videoRef.current || !audioRef.current || isExporting) return;
+    setIsExporting(true);
+    setExportProgress(0);
+    setIsPlaying(false);
+
+    const video = videoRef.current;
+    const audio = audioRef.current;
+    
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth || 720;
+    canvas.height = video.videoHeight || 1280;
+    const ctx = canvas.getContext('2d');
+    
+    if (!ctx) {
+      setIsExporting(false);
+      return;
+    }
+
+    let frameImg: HTMLImageElement | null = null;
+    if (activeFrame.startsWith('blob:')) {
+      frameImg = new Image();
+      frameImg.src = activeFrame;
+      await new Promise(resolve => {
+        if (frameImg) {
+          frameImg.onload = resolve;
+          frameImg.onerror = resolve;
+        } else {
+          resolve(null);
+        }
+      });
+    }
+
+    initAudioContext();
+    const canvasStream = canvas.captureStream(30);
+    const audioStream = audioDestRef.current?.stream;
+    
+    const tracks = [...canvasStream.getVideoTracks()];
+    if (audioStream) {
+      tracks.push(...audioStream.getAudioTracks());
+    }
+    
+    const combinedStream = new MediaStream(tracks);
+    
+    const supportedTypes = [
+      'video/mp4;codecs=avc1,mp4a.40.2',
+      'video/mp4',
+      'video/webm;codecs=vp9,vorbis',
+      'video/webm;codecs=vp8,vorbis',
+      'video/webm;codecs=vp9,opus',
+      'video/webm;codecs=vp8,opus',
+      'video/webm'
+    ];
+    const mimeType = supportedTypes.find(t => MediaRecorder.isTypeSupported(t)) || 'video/mp4';
+    const extension = mimeType.includes('mp4') ? 'mp4' : 'webm';
+    
+    const recorder = new MediaRecorder(combinedStream, { mimeType });
+    const chunks: Blob[] = [];
+    
+    recorder.ondataavailable = e => {
+      if (e.data.size > 0) chunks.push(e.data);
+    };
+    
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        if (recorder.state === 'recording') {
+          recorder.pause();
+          video.pause();
+          audio.pause();
+        }
+      } else {
+        if (recorder.state === 'paused') {
+          recorder.resume();
+          video.play().catch(console.error);
+          audio.play().catch(console.error);
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    recorder.onstop = async () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      const finalBlob = new Blob(chunks, { type: mimeType });
+      const fileName = `spinedit-${Date.now()}.${extension}`;
+      
+      if (Capacitor.isNativePlatform()) {
+        try {
+          const reader = new FileReader();
+          reader.readAsDataURL(finalBlob);
+          reader.onloadend = async () => {
+            const base64data = reader.result as string;
+            
+            const savedFile = await Filesystem.writeFile({
+              path: fileName,
+              data: base64data,
+              directory: Directory.Cache
+            });
+            
+            await CapShare.share({
+              title: 'My SpinEdit Video',
+              url: savedFile.uri,
+              dialogTitle: 'Share Video'
+            });
+          };
+        } catch (e) {
+          console.error("Error saving/sharing", e);
+          alert("Error saving video.");
+        }
+      } else {
+        const url = URL.createObjectURL(finalBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+      setIsExporting(false);
+      setExportProgress(100);
+      setTimeout(() => setExportProgress(0), 1000);
+    };
+    
+    recorder.start();
+    
+    // Fix for webm blobs not seeking properly in Chrome
+    if (videoUrl.startsWith('blob:')) {
+      video.src = videoUrl;
+    } else {
+      video.currentTime = 0;
+    }
+    audio.currentTime = 0;
+    
+    // We need to play to capture the stream
+    try {
+      await video.play();
+      await audio.play();
+    } catch (e) {
+      console.error("Playback failed during export", e);
+      setIsExporting(false);
+      return;
+    }
+    
+    let duration = video.duration;
+    if (!duration || duration === Infinity || isNaN(duration)) {
+      duration = editScript[editScript.length - 1]?.endTime || 10;
+    }
+    let lastPlaybackRate = -1;
+    
+    const drawFrame = () => {
+      if (video.currentTime >= duration - 0.1 || video.ended) {
+        if (recorder.state === 'recording') {
+          recorder.stop();
+          video.pause();
+          audio.pause();
+        }
+        return;
+      }
+      
+      const time = video.currentTime;
+      setExportProgress((time / duration) * 100);
+      
+      const segment = editScript.find(s => time >= s.startTime && time <= s.endTime) || editScript[editScript.length - 1];
+      
+      if (segment) {
+        let rate = segment.playbackRate;
+        if (typeof rate !== 'number' || isNaN(rate) || rate <= 0) rate = 1;
+        if (rate < 0.5) rate = 0.5;
+        if (rate > 5.0) rate = 5.0;
+
+        if (lastPlaybackRate !== rate) {
+          video.playbackRate = rate;
+          lastPlaybackRate = rate;
+        }
+        if (segment.cssFilter && segment.cssFilter !== 'none') {
+          ctx.filter = segment.cssFilter;
+        } else {
+          ctx.filter = 'none';
+        }
+      }
+      
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      
+      if (frameImg) {
+        ctx.filter = 'none';
+        ctx.drawImage(frameImg, 0, 0, canvas.width, canvas.height);
+      }
+      
+      if (userTexts.length > 0) {
+        ctx.filter = 'none';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        
+        userTexts.forEach((t, index) => {
+          if (t.startTime !== undefined && t.endTime !== undefined) {
+            if (time < t.startTime || time > t.endTime) return;
+          }
+
+          const fontSize = canvas.width * 0.1; 
+          ctx.font = `bold ${fontSize}px ${t.fontFamily}, sans-serif`;
+          ctx.fillStyle = 'white';
+          ctx.strokeStyle = 'black';
+          ctx.lineWidth = fontSize * 0.05;
+          
+          const x = canvas.width / 2;
+          const y = canvas.height / 2 + (t.yOffset || (index * fontSize * 1.2));
+          
+          ctx.strokeText(t.text, x, y);
+          ctx.fillText(t.text, x, y);
+        });
+      }
+      
+      requestAnimationFrame(drawFrame);
+    };
+    
+    requestAnimationFrame(drawFrame);
   };
 
   // Frame styles
@@ -136,7 +433,7 @@ export function VideoPreview({ videoBlob, editScript, vibe, onReset }: VideoPrev
   return (
     <div className="relative w-full h-full bg-zinc-950 flex flex-col items-center justify-center overflow-hidden">
       {/* Audio Track */}
-      <audio ref={audioRef} src={VIBE_AUDIO[vibe] || VIBE_AUDIO['Energetic']} loop />
+      <audio ref={audioRef} src={VIBE_AUDIO[vibe] || VIBE_AUDIO['Energetic']} loop crossOrigin="anonymous" />
 
       {/* Video Container */}
       <div 
@@ -164,14 +461,15 @@ export function VideoPreview({ videoBlob, editScript, vibe, onReset }: VideoPrev
         
         {/* User Draggable Texts */}
         <AnimatePresence>
-          {userTexts.map(t => (
+          {visibleTexts.map(t => (
             <motion.div
               key={t.id}
               initial={{ opacity: 0, scale: 0.8, filter: 'blur(4px)' }}
               animate={{ 
                 opacity: 1, 
                 scale: selectedTextId === t.id ? 1.05 : 1,
-                filter: 'blur(0px)'
+                filter: 'blur(0px)',
+                y: t.yOffset ? t.yOffset : 0
               }}
               exit={{ opacity: 0, scale: 0.8, filter: 'blur(4px)' }}
               whileHover={{ scale: selectedTextId === t.id ? 1.05 : 1.02 }}
@@ -179,6 +477,9 @@ export function VideoPreview({ videoBlob, editScript, vibe, onReset }: VideoPrev
               transition={{ type: "spring", stiffness: 400, damping: 25 }}
               drag
               dragMomentum={false}
+              onDragEnd={(e, info) => {
+                setUserTexts(texts => texts.map(text => text.id === t.id ? { ...text, yOffset: (text.yOffset || 0) + info.offset.y } : text));
+              }}
               onClick={(e) => {
                 e.stopPropagation();
                 setSelectedTextId(t.id);
@@ -307,6 +608,33 @@ export function VideoPreview({ videoBlob, editScript, vibe, onReset }: VideoPrev
         )}
       </AnimatePresence>
 
+      {/* Exporting Overlay */}
+      <AnimatePresence>
+        {isExporting && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 z-50 flex flex-col items-center justify-center pointer-events-none"
+          >
+            <div className="bg-zinc-900/95 p-8 rounded-3xl shadow-2xl flex flex-col items-center border border-white/10 backdrop-blur-md">
+              <Loader2 size={48} className="text-indigo-500 animate-spin mb-4" />
+              <h2 className="text-2xl font-bold text-white mb-2">Video Kaydediliyor...</h2>
+              <div className="w-64 h-2 bg-zinc-800 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-indigo-500 transition-all duration-300 ease-out"
+                  style={{ width: `${exportProgress}%` }}
+                />
+              </div>
+              <p className="text-zinc-400 mt-2">{Math.round(exportProgress)}%</p>
+              <p className="text-amber-400 text-xs mt-4 text-center max-w-[200px] font-medium">
+                ⚠️ Lütfen işlem bitene kadar bu ekranda kalın ve sekmeyi değiştirmeyin.
+              </p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Bottom Controls */}
       <div 
         className="absolute bottom-8 left-0 right-0 flex justify-center items-center gap-4 px-6 z-40"
@@ -331,8 +659,12 @@ export function VideoPreview({ videoBlob, editScript, vibe, onReset }: VideoPrev
           <Frame size={24} />
         </button>
         
-        <button className="p-4 rounded-full bg-zinc-800/80 text-zinc-300 backdrop-blur-md hover:bg-zinc-700 hover:text-white transition-colors hidden sm:block">
-          <Share size={24} />
+        <button 
+          onClick={exportVideo}
+          disabled={isExporting}
+          className="p-4 rounded-full bg-indigo-500 text-white shadow-lg shadow-indigo-500/20 hover:bg-indigo-600 transition-colors disabled:opacity-50"
+        >
+          <Download size={24} />
         </button>
       </div>
     </div>

@@ -4,8 +4,10 @@
 	"webDir": "dist",
 	"packageClassList": [
 		"AppPlugin",
+		"FilesystemPlugin",
 		"HapticsPlugin",
 		"KeyboardPlugin",
+		"SharePlugin",
 		"StatusBarPlugin"
 	]
 }
