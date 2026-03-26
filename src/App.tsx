@@ -17,6 +17,7 @@ export default function App() {
   const [step, setStep] = useState<AppStep>('setup');
   const [vibe, setVibe] = useState<string>(VIBES[0]);
   const [videoBlob, setVideoBlob] = useState<Blob | null>(null);
+  const [customAudioBlob, setCustomAudioBlob] = useState<Blob | null>(null);
   const [editScript, setEditScript] = useState<EditSegment[] | null>(null);
   const [initialTexts, setInitialTexts] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -63,12 +64,12 @@ export default function App() {
     setIsAutoMagic(useAutoMagic);
     try {
       if (useAutoMagic) {
-        const result = await generateAutoMagicEdit(blob);
+        const result = await generateAutoMagicEdit(blob, customAudioBlob || undefined);
         setVibe(result.vibe);
         setEditScript(result.editScript);
         setInitialTexts(result.texts);
       } else {
-        const script = await generateVideoEditScript(blob, vibe);
+        const script = await generateVideoEditScript(blob, vibe, customAudioBlob || undefined);
         setEditScript(script);
         setInitialTexts([]);
       }
@@ -86,6 +87,7 @@ export default function App() {
   const reset = () => {
     setStep('setup');
     setVideoBlob(null);
+    setCustomAudioBlob(null);
     setEditScript(null);
     setInitialTexts([]);
     setError(null);
@@ -182,6 +184,27 @@ export default function App() {
                       onChange={(e) => {
                         const file = e.target.files?.[0];
                         if (file) {
+                          setVibe('Auto Magic');
+                          handleRecordingComplete(file, true);
+                        }
+                      }}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                    />
+                    <button
+                      className="w-full py-5 rounded-2xl bg-gradient-to-r from-pink-600 to-rose-600 text-white font-bold text-lg flex items-center justify-center gap-3 hover:opacity-90 transition-opacity shadow-lg shadow-rose-500/20 active:scale-95"
+                    >
+                      <Zap size={24} className="text-yellow-300" />
+                      Otomatik Sihirli Yükle
+                    </button>
+                  </div>
+
+                  <div className="relative w-full">
+                    <input
+                      type="file"
+                      accept="video/*"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
                           handleRecordingComplete(file, false);
                         }
                       }}
@@ -191,7 +214,31 @@ export default function App() {
                       className="w-full py-4 rounded-2xl bg-zinc-900 border border-zinc-800 text-zinc-300 font-bold text-lg flex items-center justify-center gap-3 hover:bg-zinc-800 transition-colors active:scale-95"
                     >
                       <Upload size={20} />
-                      Video Yükle
+                      Normal Video Yükle
+                    </button>
+                  </div>
+
+                  <div className="relative w-full">
+                    <input
+                      type="file"
+                      accept="audio/*"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          setCustomAudioBlob(file);
+                        }
+                      }}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                    />
+                    <button
+                      className={`w-full py-4 rounded-2xl border font-bold text-lg flex items-center justify-center gap-3 transition-colors active:scale-95 ${
+                        customAudioBlob 
+                          ? 'bg-green-500/20 border-green-500 text-green-400' 
+                          : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:bg-zinc-800'
+                      }`}
+                    >
+                      <Music size={20} />
+                      {customAudioBlob ? 'Müzik Eklendi' : 'Kendi Müziğini Ekle'}
                     </button>
                   </div>
                 </div>
@@ -252,6 +299,7 @@ export default function App() {
               editScript={editScript} 
               vibe={vibe}
               initialTexts={initialTexts}
+              customAudioBlob={customAudioBlob}
               onReset={reset}
             />
           </motion.div>

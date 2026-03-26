@@ -1,16 +1,18 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { EditSegment } from '../services/ai';
-import { Play, Pause, RotateCcw, Share, Type, Trash2, Check, Frame, Download, Loader2 } from 'lucide-react';
+import { Play, Pause, RotateCcw, Share, Type, Trash2, Check, Frame, Download, Loader2, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share as CapShare } from '@capacitor/share';
 import { Capacitor } from '@capacitor/core';
+import { EffectsOverlay } from './EffectsOverlay';
 
 interface VideoPreviewProps {
   videoBlob: Blob;
   editScript: EditSegment[];
   vibe: string;
   initialTexts?: any[];
+  customAudioBlob?: Blob | null;
   onReset: () => void;
 }
 
@@ -32,7 +34,7 @@ const VIBE_AUDIO: Record<string, string> = {
 
 const FONTS = ['inter', 'anton', 'caveat', 'playfair', 'space', 'bebas', 'pacifico', 'cinzel', 'marker', 'righteous', 'oswald'];
 
-export function VideoPreview({ videoBlob, editScript, vibe, initialTexts = [], onReset }: VideoPreviewProps) {
+export function VideoPreview({ videoBlob, editScript, vibe, initialTexts = [], customAudioBlob, onReset }: VideoPreviewProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -42,6 +44,15 @@ export function VideoPreview({ videoBlob, editScript, vibe, initialTexts = [], o
   const currentSegmentRef = useRef<EditSegment | null>(null);
   const [visibleTexts, setVisibleTexts] = useState<UserText[]>([]);
   const visibleTextsRef = useRef<string>('');
+  const [customAudioUrl, setCustomAudioUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (customAudioBlob) {
+      const url = URL.createObjectURL(customAudioBlob);
+      setCustomAudioUrl(url);
+      return () => URL.revokeObjectURL(url);
+    }
+  }, [customAudioBlob]);
 
   const initAudioContext = () => {
     try {
@@ -91,8 +102,10 @@ export function VideoPreview({ videoBlob, editScript, vibe, initialTexts = [], o
   const [selectedTextId, setSelectedTextId] = useState<string | null>(null);
 
   const [activeFrame, setActiveFrame] = useState<string>(editScript[0]?.frameStyle || 'none');
+  const [activeEffect, setActiveEffect] = useState<string>(editScript[0]?.effect || 'none');
   const [customFrames, setCustomFrames] = useState<string[]>([]);
   const [showFrameMenu, setShowFrameMenu] = useState(false);
+  const [showEffectMenu, setShowEffectMenu] = useState(false);
 
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
@@ -126,6 +139,8 @@ export function VideoPreview({ videoBlob, editScript, vibe, initialTexts = [], o
           if (segment !== currentSegmentRef.current) {
             setCurrentSegment(segment);
             currentSegmentRef.current = segment;
+            if (segment.frameStyle) setActiveFrame(segment.frameStyle);
+            if (segment.effect) setActiveEffect(segment.effect);
           }
 
           // Apply playback rate
@@ -240,7 +255,8 @@ export function VideoPreview({ videoBlob, editScript, vibe, initialTexts = [], o
       'video/webm'
     ];
     const mimeType = supportedTypes.find(t => MediaRecorder.isTypeSupported(t)) || 'video/mp4';
-    const extension = mimeType.includes('mp4') ? 'mp4' : 'webm';
+    // Force .mp4 extension as requested by user, even if recorded as webm
+    const extension = 'mp4';
     
     const recorder = new MediaRecorder(combinedStream, { mimeType });
     const chunks: Blob[] = [];
@@ -268,7 +284,8 @@ export function VideoPreview({ videoBlob, editScript, vibe, initialTexts = [], o
 
     recorder.onstop = async () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      const finalBlob = new Blob(chunks, { type: mimeType });
+      // Force the blob type to video/mp4 for better compatibility when downloading with .mp4 extension
+      const finalBlob = new Blob(chunks, { type: 'video/mp4' });
       const fileName = `spinedit-${Date.now()}.${extension}`;
       
       if (Capacitor.isNativePlatform()) {
@@ -333,6 +350,47 @@ export function VideoPreview({ videoBlob, editScript, vibe, initialTexts = [], o
     }
     let lastPlaybackRate = -1;
     
+    let currentEffect = 'none';
+    let particles: any[] = [];
+    
+    const initParticles = (effect: string) => {
+      if (effect === currentEffect) return;
+      currentEffect = effect;
+      if (effect === 'snow') {
+        particles = Array.from({ length: 50 }).map(() => ({
+          x: Math.random() * canvas.width,
+          y: Math.random() * canvas.height,
+          size: Math.random() * 4 + 2,
+          speedY: Math.random() * 3 + 2,
+          speedX: Math.random() * 2 - 1
+        }));
+      } else if (effect === 'confetti') {
+        const colors = ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff'];
+        particles = Array.from({ length: 100 }).map(() => ({
+          x: Math.random() * canvas.width,
+          y: Math.random() * canvas.height,
+          size: Math.random() * 8 + 4,
+          color: colors[Math.floor(Math.random() * colors.length)],
+          speedY: Math.random() * 5 + 3,
+          speedX: Math.random() * 4 - 2,
+          rotation: Math.random() * 360,
+          rotSpeed: Math.random() * 10 - 5
+        }));
+      } else if (effect === 'balloons') {
+        const colors = ['#ff595e', '#ffca3a', '#8ac926', '#1982c4', '#6a4c93'];
+        particles = Array.from({ length: 15 }).map(() => ({
+          x: Math.random() * canvas.width,
+          y: Math.random() * canvas.height,
+          size: Math.random() * 20 + 30,
+          color: colors[Math.floor(Math.random() * colors.length)],
+          speedY: -(Math.random() * 3 + 2),
+          speedX: Math.random() * 2 - 1
+        }));
+      } else {
+        particles = [];
+      }
+    };
+
     const drawFrame = () => {
       if (video.currentTime >= duration - 0.1 || video.ended) {
         if (recorder.state === 'recording') {
@@ -347,6 +405,9 @@ export function VideoPreview({ videoBlob, editScript, vibe, initialTexts = [], o
       setExportProgress((time / duration) * 100);
       
       const segment = editScript.find(s => time >= s.startTime && time <= s.endTime) || editScript[editScript.length - 1];
+      
+      let currentFrameStyle = activeFrame;
+      let currentEffectStyle = activeEffect;
       
       if (segment) {
         let rate = segment.playbackRate;
@@ -363,12 +424,102 @@ export function VideoPreview({ videoBlob, editScript, vibe, initialTexts = [], o
         } else {
           ctx.filter = 'none';
         }
+        if (segment.frameStyle) currentFrameStyle = segment.frameStyle;
+        if (segment.effect) currentEffectStyle = segment.effect;
       }
+      
+      initParticles(currentEffectStyle);
       
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       
-      if (frameImg) {
+      // Draw Effects
+      if (currentEffectStyle !== 'none' && particles.length > 0) {
         ctx.filter = 'none';
+        particles.forEach(p => {
+          if (currentEffectStyle === 'snow') {
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+            ctx.fill();
+            p.y += p.speedY;
+            p.x += p.speedX;
+            if (p.y > canvas.height) p.y = -10;
+            if (p.x < 0) p.x = canvas.width;
+            if (p.x > canvas.width) p.x = 0;
+          } else if (currentEffectStyle === 'confetti') {
+            ctx.save();
+            ctx.translate(p.x, p.y);
+            ctx.rotate(p.rotation * Math.PI / 180);
+            ctx.fillStyle = p.color;
+            ctx.fillRect(-p.size / 4, -p.size / 2, p.size / 2, p.size);
+            ctx.restore();
+            p.y += p.speedY;
+            p.x += p.speedX;
+            p.rotation += p.rotSpeed;
+            if (p.y > canvas.height) p.y = -10;
+            if (p.x < 0) p.x = canvas.width;
+            if (p.x > canvas.width) p.x = 0;
+          } else if (currentEffectStyle === 'balloons') {
+            ctx.fillStyle = p.color;
+            ctx.beginPath();
+            ctx.ellipse(p.x, p.y, p.size / 2, p.size * 0.6, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(p.x, p.y + p.size * 0.6);
+            ctx.lineTo(p.x, p.y + p.size * 0.6 + 40);
+            ctx.stroke();
+            p.y += p.speedY;
+            p.x += p.speedX;
+            if (p.y < -p.size) p.y = canvas.height + p.size;
+            if (p.x < 0) p.x = canvas.width;
+            if (p.x > canvas.width) p.x = 0;
+          }
+        });
+      }
+
+      // Draw CSS Frames
+      ctx.filter = 'none';
+      if (currentFrameStyle === 'cinematic') {
+        ctx.fillStyle = 'black';
+        ctx.fillRect(0, 0, canvas.width, canvas.height * 0.08);
+        ctx.fillRect(0, canvas.height * 0.92, canvas.width, canvas.height * 0.08);
+      } else if (currentFrameStyle === 'polaroid') {
+        ctx.fillStyle = 'white';
+        ctx.fillRect(0, 0, canvas.width, 16);
+        ctx.fillRect(0, 0, 16, canvas.height);
+        ctx.fillRect(canvas.width - 16, 0, 16, canvas.height);
+        ctx.fillRect(0, canvas.height - 64, canvas.width, 64);
+      } else if (currentFrameStyle === 'neon') {
+        ctx.strokeStyle = '#ec4899';
+        ctx.lineWidth = 8;
+        ctx.shadowColor = 'rgba(236,72,153,0.8)';
+        ctx.shadowBlur = 30;
+        ctx.strokeRect(4, 4, canvas.width - 8, canvas.height - 8);
+        ctx.shadowBlur = 0;
+      } else if (currentFrameStyle === 'vintage') {
+        ctx.strokeStyle = '#8b5a2b';
+        ctx.lineWidth = 40;
+        ctx.strokeRect(20, 20, canvas.width - 40, canvas.height - 40);
+      } else if (currentFrameStyle === 'glitch') {
+        ctx.fillStyle = 'rgba(239, 68, 68, 0.5)';
+        ctx.fillRect(0, 0, 8, canvas.height);
+        ctx.fillStyle = 'rgba(59, 130, 246, 0.5)';
+        ctx.fillRect(canvas.width - 8, 0, 8, canvas.height);
+      } else if (currentFrameStyle === 'minimal') {
+        ctx.strokeStyle = '#f4f4f5';
+        ctx.lineWidth = 16;
+        ctx.beginPath();
+        ctx.roundRect(8, 8, canvas.width - 16, canvas.height - 16, 24);
+        ctx.stroke();
+      } else if (currentFrameStyle === 'bold') {
+        ctx.strokeStyle = '#facc15';
+        ctx.lineWidth = 24;
+        ctx.strokeRect(12, 12, canvas.width - 24, canvas.height - 24);
+      }
+      
+      if (frameImg && currentFrameStyle.startsWith('blob:')) {
         ctx.drawImage(frameImg, 0, 0, canvas.width, canvas.height);
       }
       
@@ -408,6 +559,10 @@ export function VideoPreview({ videoBlob, editScript, vibe, initialTexts = [], o
       case 'cinematic': return 'border-y-[8vh] border-black';
       case 'polaroid': return 'border-[16px] border-b-[64px] border-white shadow-2xl bg-white';
       case 'neon': return 'border-4 border-pink-500 shadow-[0_0_30px_rgba(236,72,153,0.8)]';
+      case 'vintage': return 'border-[20px] border-[#8b5a2b] shadow-inner';
+      case 'glitch': return 'border-l-4 border-r-4 border-l-red-500 border-r-blue-500';
+      case 'minimal': return 'border-[8px] border-zinc-100 rounded-3xl shadow-sm';
+      case 'bold': return 'border-[12px] border-yellow-400';
       default: return '';
     }
   };
@@ -433,13 +588,14 @@ export function VideoPreview({ videoBlob, editScript, vibe, initialTexts = [], o
   return (
     <div className="relative w-full h-full bg-zinc-950 flex flex-col items-center justify-center overflow-hidden">
       {/* Audio Track */}
-      <audio ref={audioRef} src={VIBE_AUDIO[vibe] || VIBE_AUDIO['Energetic']} loop crossOrigin="anonymous" />
+      <audio ref={audioRef} src={customAudioUrl || VIBE_AUDIO[vibe] || VIBE_AUDIO['Energetic']} loop crossOrigin="anonymous" />
 
       {/* Video Container */}
       <div 
         className={`relative w-full max-w-md aspect-[9/16] transition-all duration-500 overflow-hidden ${getFrameClasses(activeFrame.startsWith('blob:') ? 'none' : activeFrame)}`}
-        onClick={() => { setSelectedTextId(null); setShowFrameMenu(false); }}
+        onClick={() => { setSelectedTextId(null); setShowFrameMenu(false); setShowEffectMenu(false); }}
       >
+        <EffectsOverlay effect={activeEffect} />
         {activeFrame.startsWith('blob:') && (
           <img 
             src={activeFrame} 
@@ -575,7 +731,7 @@ export function VideoPreview({ videoBlob, editScript, vibe, initialTexts = [], o
           >
             <h3 className="text-white font-medium text-sm">Çerçeve Seç</h3>
             <div className="flex items-center gap-3 overflow-x-auto pb-2 scrollbar-hide">
-              {['none', 'cinematic', 'polaroid', 'neon'].map(f => (
+              {['none', 'cinematic', 'polaroid', 'neon', 'vintage', 'glitch', 'minimal', 'bold'].map(f => (
                 <button
                   key={f}
                   onClick={() => setActiveFrame(f)}
@@ -603,6 +759,33 @@ export function VideoPreview({ videoBlob, editScript, vibe, initialTexts = [], o
                 <input type="file" accept="image/png, image/webp, image/gif" className="hidden" onChange={handleCustomFrameUpload} />
                 + Şeffaf Çerçeve Yükle (PNG)
               </label>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Effect Menu */}
+      <AnimatePresence>
+        {showEffectMenu && (
+          <motion.div 
+            initial={{ opacity: 0, y: 50 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 50 }}
+            className="absolute bottom-32 left-4 right-4 max-w-md mx-auto bg-zinc-900/95 backdrop-blur-xl border border-white/10 p-4 rounded-2xl shadow-2xl z-40 flex flex-col gap-4"
+          >
+            <h3 className="text-white font-medium text-sm">Efekt Seç</h3>
+            <div className="flex items-center gap-3 overflow-x-auto pb-2 scrollbar-hide">
+              {['none', 'snow', 'confetti', 'balloons'].map(e => (
+                <button
+                  key={e}
+                  onClick={() => setActiveEffect(e)}
+                  className={`px-4 py-2 rounded-xl text-sm capitalize whitespace-nowrap transition-colors ${
+                    activeEffect === e ? 'bg-indigo-500 text-white' : 'bg-white/10 text-zinc-300 hover:bg-white/20'
+                  }`}
+                >
+                  {e === 'none' ? 'Yok' : e === 'snow' ? 'Kar' : e === 'confetti' ? 'Konfeti' : 'Balon'}
+                </button>
+              ))}
             </div>
           </motion.div>
         )}
@@ -653,10 +836,17 @@ export function VideoPreview({ videoBlob, editScript, vibe, initialTexts = [], o
         </button>
 
         <button 
-          onClick={() => { setShowFrameMenu(!showFrameMenu); setSelectedTextId(null); }} 
+          onClick={() => { setShowFrameMenu(!showFrameMenu); setShowEffectMenu(false); setSelectedTextId(null); }} 
           className={`p-4 rounded-full backdrop-blur-md transition-colors shadow-lg ${showFrameMenu ? 'bg-indigo-500 text-white shadow-indigo-500/20' : 'bg-zinc-800/80 text-zinc-300 hover:bg-zinc-700 hover:text-white'}`}
         >
           <Frame size={24} />
+        </button>
+
+        <button 
+          onClick={() => { setShowEffectMenu(!showEffectMenu); setShowFrameMenu(false); setSelectedTextId(null); }} 
+          className={`p-4 rounded-full backdrop-blur-md transition-colors shadow-lg ${showEffectMenu ? 'bg-indigo-500 text-white shadow-indigo-500/20' : 'bg-zinc-800/80 text-zinc-300 hover:bg-zinc-700 hover:text-white'}`}
+        >
+          <Sparkles size={24} />
         </button>
         
         <button 

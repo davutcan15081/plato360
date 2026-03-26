@@ -8,6 +8,7 @@ export interface EditSegment {
   playbackRate: number;
   cssFilter: string;
   frameStyle: string;
+  effect?: string;
 }
 
 export interface AutoMagicResult {
@@ -16,22 +17,23 @@ export interface AutoMagicResult {
   texts: { text: string; startTime: number; endTime: number; fontFamily: string; yOffset: number }[];
 }
 
-export async function generateAutoMagicEdit(videoBlob: Blob): Promise<AutoMagicResult> {
+export async function generateAutoMagicEdit(videoBlob: Blob, audioBlob?: Blob): Promise<AutoMagicResult> {
   const base64Video = await blobToBase64(videoBlob);
   const mimeType = videoBlob.type || 'video/webm';
   const duration = await getVideoDuration(videoBlob);
 
-  const prompt = `You are an expert video editor, director, and marketing copywriter. I am providing you with a video that is approximately ${duration.toFixed(2)} seconds long.
-Analyze the video deeply frame by frame.
+  const prompt = `You are an expert video editor, director, and marketing copywriter. I am providing you with a video that is approximately ${duration.toFixed(2)} seconds long.${audioBlob ? ' I am also providing a custom background music track.' : ''}
+Analyze the video deeply frame by frame${audioBlob ? ' and listen to the music to sync the edits' : ''}.
 1. Identify the product, subject, or main action in the video.
 2. Choose the BEST matching vibe for this video from this list: ['Energetic', 'Cinematic', 'Minimalist', 'Cyberpunk'].
-3. Create a dynamic edit script (speed ramps, filters) that matches the chosen vibe and highlights the best moments.
+3. Create a dynamic edit script (speed ramps, filters) that matches the chosen vibe and highlights the best moments${audioBlob ? ', syncing the edits with the rhythm and drops of the music' : ''}.
 4. Generate 2 to 4 short, punchy, promotional text overlays (in Turkish) that describe the product or action. Place them at the most impactful moments.
 
 Return a JSON object with:
 - vibe: The chosen vibe string.
 - editScript: Array of segments covering 0 to ${duration.toFixed(2)} seconds continuously.
-  - startTime, endTime, playbackRate, cssFilter, frameStyle (from ['none', 'cinematic', 'polaroid', 'neon']).
+  - startTime, endTime, playbackRate, cssFilter, frameStyle (from ['none', 'cinematic', 'polaroid', 'neon', 'vintage', 'glitch', 'minimal', 'bold']).
+  - effect (from ['none', 'snow', 'confetti', 'balloons']).
 - texts: Array of text overlays.
   - text: Short promotional text in Turkish (max 4-5 words).
   - startTime: When it appears.
@@ -39,17 +41,31 @@ Return a JSON object with:
   - fontFamily: Choose from ['inter', 'anton', 'caveat', 'playfair', 'space', 'bebas', 'pacifico', 'cinzel', 'marker', 'righteous', 'oswald'].
   - yOffset: Vertical position offset from center (e.g., -200 for top, 0 for center, 200 for bottom).`;
 
+  const contents: any[] = [
+    {
+      inlineData: {
+        data: base64Video.split(',')[1],
+        mimeType: mimeType,
+      }
+    }
+  ];
+
+  if (audioBlob) {
+    const base64Audio = await blobToBase64(audioBlob);
+    const audioMimeType = audioBlob.type || 'audio/mpeg';
+    contents.push({
+      inlineData: {
+        data: base64Audio.split(',')[1],
+        mimeType: audioMimeType,
+      }
+    });
+  }
+
+  contents.push({ text: prompt });
+
   const response = await ai.models.generateContent({
     model: 'gemini-2.5-flash',
-    contents: [
-      {
-        inlineData: {
-          data: base64Video.split(',')[1],
-          mimeType: mimeType,
-        }
-      },
-      { text: prompt }
-    ],
+    contents: contents,
     config: {
       responseMimeType: 'application/json',
       responseSchema: {
@@ -65,7 +81,8 @@ Return a JSON object with:
                 endTime: { type: Type.NUMBER },
                 playbackRate: { type: Type.NUMBER },
                 cssFilter: { type: Type.STRING },
-                frameStyle: { type: Type.STRING }
+                frameStyle: { type: Type.STRING },
+                effect: { type: Type.STRING }
               },
               required: ['startTime', 'endTime', 'playbackRate', 'cssFilter', 'frameStyle']
             }
@@ -103,18 +120,18 @@ Return a JSON object with:
   }
 }
 
-export async function generateVideoEditScript(videoBlob: Blob, vibe: string): Promise<EditSegment[]> {
+export async function generateVideoEditScript(videoBlob: Blob, vibe: string, audioBlob?: Blob): Promise<EditSegment[]> {
   const base64Video = await blobToBase64(videoBlob);
   const mimeType = videoBlob.type || 'video/webm';
   const duration = await getVideoDuration(videoBlob);
 
-  const prompt = `You are an expert video editor and director. I am providing you with a video that is approximately ${duration.toFixed(2)} seconds long.
+  const prompt = `You are an expert video editor and director. I am providing you with a video that is approximately ${duration.toFixed(2)} seconds long.${audioBlob ? ' I am also providing a custom background music track.' : ''}
 The user wants a '${vibe}' promotional edit.
 
-CRITICAL INSTRUCTION: You MUST deeply analyze the actual visual content of the video frame by frame.
+CRITICAL INSTRUCTION: You MUST deeply analyze the actual visual content of the video frame by frame${audioBlob ? ' and listen to the music to sync the edits' : ''}.
 1. Identify the most interesting visual moments (e.g., best angles of the product, product reveals, dynamic movements, or interesting lighting).
 2. Apply SLOW MOTION (playbackRate: 0.3 to 0.8) exactly during these interesting visual moments to highlight them.
-3. Apply FAST FORWARD (playbackRate: 1.5 to 3.0) during transitions, repetitive spinning, or less interesting parts to create a dynamic "speed ramp" effect.
+3. Apply FAST FORWARD (playbackRate: 1.5 to 3.0) during transitions, repetitive spinning, or less interesting parts to create a dynamic "speed ramp" effect${audioBlob ? ', syncing the edits with the rhythm and drops of the music' : ''}.
 4. Apply color grading (cssFilter) that matches the vibe AND the specific action on screen (e.g., increase contrast during slow motion).
 
 Return a JSON array of segments covering the entire video duration continuously from 0 to ${duration.toFixed(2)} seconds.
@@ -123,19 +140,34 @@ Each segment must have:
 - endTime: end time in seconds (number)
 - playbackRate: speed multiplier (e.g., 0.5 for slow, 1.0 for normal, 2.0 for fast)
 - cssFilter: a valid CSS filter string (e.g., 'contrast(1.2) saturate(1.5)', 'grayscale(100%)', 'sepia(50%)', or 'none')
-- frameStyle: one of ['none', 'cinematic', 'polaroid', 'neon']`;
+- frameStyle: one of ['none', 'cinematic', 'polaroid', 'neon', 'vintage', 'glitch', 'minimal', 'bold']
+- effect: one of ['none', 'snow', 'confetti', 'balloons']`;
+
+  const contents: any[] = [
+    {
+      inlineData: {
+        data: base64Video.split(',')[1],
+        mimeType: mimeType,
+      }
+    }
+  ];
+
+  if (audioBlob) {
+    const base64Audio = await blobToBase64(audioBlob);
+    const audioMimeType = audioBlob.type || 'audio/mpeg';
+    contents.push({
+      inlineData: {
+        data: base64Audio.split(',')[1],
+        mimeType: audioMimeType,
+      }
+    });
+  }
+
+  contents.push({ text: prompt });
 
   const response = await ai.models.generateContent({
     model: 'gemini-2.5-flash',
-    contents: [
-      {
-        inlineData: {
-          data: base64Video.split(',')[1],
-          mimeType: mimeType,
-        }
-      },
-      { text: prompt }
-    ],
+    contents: contents,
     config: {
       responseMimeType: 'application/json',
       responseSchema: {
@@ -147,7 +179,8 @@ Each segment must have:
             endTime: { type: Type.NUMBER },
             playbackRate: { type: Type.NUMBER },
             cssFilter: { type: Type.STRING },
-            frameStyle: { type: Type.STRING }
+            frameStyle: { type: Type.STRING },
+            effect: { type: Type.STRING }
           },
           required: ['startTime', 'endTime', 'playbackRate', 'cssFilter', 'frameStyle']
         }
