@@ -178,22 +178,38 @@ export function VideoPreview({ videoBlob, editScript, vibe, initialTexts = [], c
         audioRef.current.pause();
         setIsPlaying(false);
       } else {
+        // Ensure video is muted before playing to satisfy autoplay policies on some mobile browsers
+        videoRef.current.muted = true;
+        
+        const p1 = videoRef.current.play();
+        const p2 = audioRef.current.play();
+        
+        let videoSuccess = false;
         try {
-          const p1 = videoRef.current.play();
-          const p2 = audioRef.current.play();
           if (p1 !== undefined) await p1;
-          if (p2 !== undefined) await p2;
-          setIsPlaying(true);
+          videoSuccess = true;
         } catch (e) {
-          console.error("Playback failed", e);
-          setIsPlaying(false);
-          // Fallback: try to play just video if audio fails
-          try {
-            await videoRef.current.play();
-            setIsPlaying(true);
-          } catch (err) {
-            console.error("Video fallback playback failed", err);
+          console.error("Video play failed", e);
+        }
+        
+        let audioSuccess = false;
+        try {
+          if (p2 !== undefined) await p2;
+          audioSuccess = true;
+        } catch (e) {
+          console.error("Audio play failed", e);
+        }
+        
+        if (videoSuccess) {
+          setIsPlaying(true);
+          if (!audioSuccess) {
+            console.warn("Playing video without audio because audio failed");
           }
+        } else {
+          // If video failed, pause audio just in case it succeeded
+          audioRef.current.pause();
+          setIsPlaying(false);
+          alert("Video oynatılamadı. Lütfen farklı bir video yüklemeyi deneyin.");
         }
       }
     }
@@ -373,20 +389,37 @@ export function VideoPreview({ videoBlob, editScript, vibe, initialTexts = [], c
     
     // We need to play to capture the stream
     try {
+      video.muted = true; // Ensure muted for autoplay policy
       const vp = video.play();
       const ap = audio.play();
-      if (vp !== undefined) await vp;
-      if (ap !== undefined) await ap;
-    } catch (e) {
-      console.error("Playback failed during export", e);
-      // Try fallback: just play video
+      
+      let videoSuccess = false;
       try {
-        await video.play();
-      } catch (err) {
-        console.error("Video fallback playback failed during export", err);
+        if (vp !== undefined) await vp;
+        videoSuccess = true;
+      } catch (e) {
+        console.error("Video play failed during export", e);
+      }
+      
+      let audioSuccess = false;
+      try {
+        if (ap !== undefined) await ap;
+        audioSuccess = true;
+      } catch (e) {
+        console.error("Audio play failed during export", e);
+      }
+      
+      if (!videoSuccess) {
+        audio.pause();
         setIsExporting(false);
+        alert("Video oynatılamadı. Lütfen tekrar deneyin.");
         return;
       }
+    } catch (e) {
+      console.error("Playback setup failed during export", e);
+      audio.pause();
+      setIsExporting(false);
+      return;
     }
     
     let duration = video.duration;
@@ -655,9 +688,17 @@ export function VideoPreview({ videoBlob, editScript, vibe, initialTexts = [], c
             className="w-full h-full object-cover transition-all duration-300"
             style={{ filter: currentSegment?.cssFilter && currentSegment.cssFilter !== 'none' ? currentSegment.cssFilter : 'none' }}
             onEnded={handleVideoEnded}
+            onError={(e) => {
+              console.error("Video error:", e);
+              const error = (e.target as HTMLVideoElement).error;
+              if (error && error.code === 4) {
+                alert("Bu video formatı tarayıcınız tarafından desteklenmiyor. Lütfen farklı bir video (örneğin .mp4) yüklemeyi deneyin.");
+              }
+            }}
             playsInline
             webkit-playsinline="true"
             controls={false}
+            preload="auto"
             muted // Mute original video audio
           />
         )}

@@ -1,4 +1,5 @@
 import { GoogleGenAI, Type } from '@google/genai';
+import { getSettings } from '../utils/settings';
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
@@ -17,10 +18,41 @@ export interface AutoMagicResult {
   texts: { text: string; startTime: number; endTime: number; fontFamily: string; yOffset: number }[];
 }
 
+async function callAnythingLLM(prompt: string, schema: any): Promise<string> {
+  const settings = getSettings();
+  const baseUrl = settings.anythingLlmBaseUrl.replace(/\/$/, '');
+  const url = `${baseUrl}/workspace/${settings.anythingLlmWorkspace}/chat`;
+  
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${settings.anythingLlmApiKey}`
+      },
+      body: JSON.stringify({
+        message: prompt + "\n\nIMPORTANT: Return ONLY valid JSON matching this structure: " + JSON.stringify(schema) + ". Do not include any markdown formatting like ```json.",
+        mode: "chat"
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`AnythingLLM API Error: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data.textResponse || data.response || data.answer || '';
+  } catch (error) {
+    if (error instanceof TypeError && error.message === 'Failed to fetch') {
+      throw new Error("Bağlantı hatası (Failed to fetch). AnythingLLM sunucusunun çalıştığından, URL'nin doğru olduğundan ve CORS izinlerinin verildiğinden emin olun. Ayrıca tarayıcınız HTTPS üzerinden HTTP (localhost) isteklerini engelliyor olabilir.");
+    }
+    throw error;
+  }
+}
+
 export async function generateAutoMagicEdit(videoBlob: Blob, audioBlob?: Blob): Promise<AutoMagicResult> {
-  const base64Video = await blobToBase64(videoBlob);
-  const mimeType = videoBlob.type || 'video/webm';
   const duration = await getVideoDuration(videoBlob);
+  const settings = getSettings();
 
   const prompt = `You are an expert video editor, director, and marketing copywriter. I am providing you with a video that is approximately ${duration.toFixed(2)} seconds long.${audioBlob ? ' I am also providing a custom background music track.' : ''}
 Analyze the video deeply frame by frame${audioBlob ? ' and listen to the music to sync the edits' : ''}.
@@ -41,73 +73,86 @@ Return a JSON object with:
   - fontFamily: Choose from ['inter', 'anton', 'caveat', 'playfair', 'space', 'bebas', 'pacifico', 'cinzel', 'marker', 'righteous', 'oswald'].
   - yOffset: Vertical position offset from center (e.g., -200 for top, 0 for center, 200 for bottom).`;
 
-  const contents: any[] = [
-    {
-      inlineData: {
-        data: base64Video.split(',')[1],
-        mimeType: mimeType,
-      }
-    }
-  ];
+  let text = '';
 
-  if (audioBlob) {
-    const base64Audio = await blobToBase64(audioBlob);
-    const audioMimeType = audioBlob.type || 'audio/mpeg';
-    contents.push({
-      inlineData: {
-        data: base64Audio.split(',')[1],
-        mimeType: audioMimeType,
-      }
+  if (settings.aiProvider === 'anythingllm') {
+    text = await callAnythingLLM(prompt, {
+      vibe: "string",
+      editScript: [{ startTime: "number", endTime: "number", playbackRate: "number", cssFilter: "string", frameStyle: "string", effect: "string" }],
+      texts: [{ text: "string", startTime: "number", endTime: "number", fontFamily: "string", yOffset: "number" }]
     });
-  }
+  } else {
+    const base64Video = await blobToBase64(videoBlob);
+    const mimeType = videoBlob.type || 'video/webm';
+    const contents: any[] = [
+      {
+        inlineData: {
+          data: base64Video.split(',')[1],
+          mimeType: mimeType,
+        }
+      }
+    ];
 
-  contents.push({ text: prompt });
+    if (audioBlob) {
+      const base64Audio = await blobToBase64(audioBlob);
+      const audioMimeType = audioBlob.type || 'audio/mpeg';
+      contents.push({
+        inlineData: {
+          data: base64Audio.split(',')[1],
+          mimeType: audioMimeType,
+        }
+      });
+    }
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
-    contents: contents,
-    config: {
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          vibe: { type: Type.STRING },
-          editScript: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                startTime: { type: Type.NUMBER },
-                endTime: { type: Type.NUMBER },
-                playbackRate: { type: Type.NUMBER },
-                cssFilter: { type: Type.STRING },
-                frameStyle: { type: Type.STRING },
-                effect: { type: Type.STRING }
-              },
-              required: ['startTime', 'endTime', 'playbackRate', 'cssFilter', 'frameStyle']
+    contents.push({ text: prompt });
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: contents,
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            vibe: { type: Type.STRING },
+            editScript: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  startTime: { type: Type.NUMBER },
+                  endTime: { type: Type.NUMBER },
+                  playbackRate: { type: Type.NUMBER },
+                  cssFilter: { type: Type.STRING },
+                  frameStyle: { type: Type.STRING },
+                  effect: { type: Type.STRING }
+                },
+                required: ['startTime', 'endTime', 'playbackRate', 'cssFilter', 'frameStyle']
+              }
+            },
+            texts: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  text: { type: Type.STRING },
+                  startTime: { type: Type.NUMBER },
+                  endTime: { type: Type.NUMBER },
+                  fontFamily: { type: Type.STRING },
+                  yOffset: { type: Type.NUMBER }
+                },
+                required: ['text', 'startTime', 'endTime', 'fontFamily', 'yOffset']
+              }
             }
           },
-          texts: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                text: { type: Type.STRING },
-                startTime: { type: Type.NUMBER },
-                endTime: { type: Type.NUMBER },
-                fontFamily: { type: Type.STRING },
-                yOffset: { type: Type.NUMBER }
-              },
-              required: ['text', 'startTime', 'endTime', 'fontFamily', 'yOffset']
-            }
-          }
-        },
-        required: ['vibe', 'editScript', 'texts']
+          required: ['vibe', 'editScript', 'texts']
+        }
       }
-    }
-  });
+    });
 
-  let text = response.text;
+    text = response.text || '';
+  }
+
   if (!text) throw new Error("No response from AI");
   
   text = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
@@ -121,9 +166,8 @@ Return a JSON object with:
 }
 
 export async function generateVideoEditScript(videoBlob: Blob, vibe: string, audioBlob?: Blob): Promise<EditSegment[]> {
-  const base64Video = await blobToBase64(videoBlob);
-  const mimeType = videoBlob.type || 'video/webm';
   const duration = await getVideoDuration(videoBlob);
+  const settings = getSettings();
 
   const prompt = `You are an expert video editor and director. I am providing you with a video that is approximately ${duration.toFixed(2)} seconds long.${audioBlob ? ' I am also providing a custom background music track.' : ''}
 The user wants a '${vibe}' promotional edit.
@@ -143,52 +187,63 @@ Each segment must have:
 - frameStyle: one of ['none', 'cinematic', 'polaroid', 'neon', 'vintage', 'glitch', 'minimal', 'bold']
 - effect: one of ['none', 'snow', 'confetti', 'balloons']`;
 
-  const contents: any[] = [
-    {
-      inlineData: {
-        data: base64Video.split(',')[1],
-        mimeType: mimeType,
-      }
-    }
-  ];
+  let text = '';
 
-  if (audioBlob) {
-    const base64Audio = await blobToBase64(audioBlob);
-    const audioMimeType = audioBlob.type || 'audio/mpeg';
-    contents.push({
-      inlineData: {
-        data: base64Audio.split(',')[1],
-        mimeType: audioMimeType,
-      }
-    });
-  }
-
-  contents.push({ text: prompt });
-
-  const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
-    contents: contents,
-    config: {
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: Type.ARRAY,
-        items: {
-          type: Type.OBJECT,
-          properties: {
-            startTime: { type: Type.NUMBER },
-            endTime: { type: Type.NUMBER },
-            playbackRate: { type: Type.NUMBER },
-            cssFilter: { type: Type.STRING },
-            frameStyle: { type: Type.STRING },
-            effect: { type: Type.STRING }
-          },
-          required: ['startTime', 'endTime', 'playbackRate', 'cssFilter', 'frameStyle']
+  if (settings.aiProvider === 'anythingllm') {
+    text = await callAnythingLLM(prompt, [
+      { startTime: "number", endTime: "number", playbackRate: "number", cssFilter: "string", frameStyle: "string", effect: "string" }
+    ]);
+  } else {
+    const base64Video = await blobToBase64(videoBlob);
+    const mimeType = videoBlob.type || 'video/webm';
+    const contents: any[] = [
+      {
+        inlineData: {
+          data: base64Video.split(',')[1],
+          mimeType: mimeType,
         }
       }
-    }
-  });
+    ];
 
-  let text = response.text;
+    if (audioBlob) {
+      const base64Audio = await blobToBase64(audioBlob);
+      const audioMimeType = audioBlob.type || 'audio/mpeg';
+      contents.push({
+        inlineData: {
+          data: base64Audio.split(',')[1],
+          mimeType: audioMimeType,
+        }
+      });
+    }
+
+    contents.push({ text: prompt });
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: contents,
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              startTime: { type: Type.NUMBER },
+              endTime: { type: Type.NUMBER },
+              playbackRate: { type: Type.NUMBER },
+              cssFilter: { type: Type.STRING },
+              frameStyle: { type: Type.STRING },
+              effect: { type: Type.STRING }
+            },
+            required: ['startTime', 'endTime', 'playbackRate', 'cssFilter', 'frameStyle']
+          }
+        }
+      }
+    });
+
+    text = response.text || '';
+  }
+
   if (!text) throw new Error("No response from AI");
   
   // Strip markdown code blocks if present

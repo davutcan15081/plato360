@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { CameraRecorder } from './components/CameraRecorder';
 import { VideoPreview } from './components/VideoPreview';
+import { Settings } from './components/Settings';
 import { generateVideoEditScript, generateAutoMagicEdit, EditSegment, AutoMagicResult } from './services/ai';
 import { motion, AnimatePresence } from 'motion/react';
-import { Sparkles, Video, Music, Wand2, Upload, Zap } from 'lucide-react';
+import { Sparkles, Video, Music, Wand2, Upload, Zap, Settings as SettingsIcon } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
 import { App as CapacitorApp } from '@capacitor/app';
 import { StatusBar, Style } from '@capacitor/status-bar';
@@ -22,6 +23,7 @@ export default function App() {
   const [initialTexts, setInitialTexts] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isAutoMagic, setIsAutoMagic] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
 
   useEffect(() => {
     const initCapacitor = async () => {
@@ -79,7 +81,8 @@ export default function App() {
       } catch (e) {}
     } catch (err) {
       console.error(err);
-      setError("Failed to generate AI edit. Please try again.");
+      const errorMessage = err instanceof Error ? err.message : "Failed to generate AI edit. Please try again.";
+      setError(errorMessage);
       setStep('setup');
     }
   };
@@ -109,16 +112,27 @@ export default function App() {
   };
 
   return (
-    <div className="w-full h-[100dvh] bg-zinc-950 text-zinc-50 overflow-hidden font-sans">
+    <div className="w-full h-[100dvh] bg-zinc-950 text-zinc-50 overflow-hidden font-sans relative">
       <AnimatePresence mode="wait">
-        {step === 'setup' && (
+        {showSettings && (
+          <Settings key="settings" onClose={() => setShowSettings(false)} />
+        )}
+        
+        {step === 'setup' && !showSettings && (
           <motion.div 
             key="setup"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="h-full flex flex-col items-center justify-center p-6 max-w-md mx-auto"
+            className="h-full flex flex-col items-center justify-center p-6 max-w-md mx-auto relative"
           >
+            <button 
+              onClick={() => setShowSettings(true)}
+              className="absolute top-6 right-6 p-3 bg-zinc-900/80 rounded-full hover:bg-zinc-800 transition-colors z-10"
+            >
+              <SettingsIcon size={24} className="text-zinc-400" />
+            </button>
+            
             <div className="w-20 h-20 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-3xl flex items-center justify-center mb-8 shadow-2xl shadow-indigo-500/20">
               <Sparkles size={40} className="text-white" />
             </div>
