@@ -170,17 +170,32 @@ export function VideoPreview({ videoBlob, editScript, vibe, initialTexts = [], c
     return () => cancelAnimationFrame(animationFrameId);
   }, [editScript, isExporting]);
 
-  const togglePlay = () => {
+  const togglePlay = async () => {
     initAudioContext();
     if (videoRef.current && audioRef.current) {
       if (isPlaying) {
         videoRef.current.pause();
         audioRef.current.pause();
+        setIsPlaying(false);
       } else {
-        videoRef.current.play();
-        audioRef.current.play();
+        try {
+          const p1 = videoRef.current.play();
+          const p2 = audioRef.current.play();
+          if (p1 !== undefined) await p1;
+          if (p2 !== undefined) await p2;
+          setIsPlaying(true);
+        } catch (e) {
+          console.error("Playback failed", e);
+          setIsPlaying(false);
+          // Fallback: try to play just video if audio fails
+          try {
+            await videoRef.current.play();
+            setIsPlaying(true);
+          } catch (err) {
+            console.error("Video fallback playback failed", err);
+          }
+        }
       }
-      setIsPlaying(!isPlaying);
     }
   };
 
@@ -210,6 +225,26 @@ export function VideoPreview({ videoBlob, editScript, vibe, initialTexts = [], c
     const video = videoRef.current;
     const audio = audioRef.current;
     
+    // Initialize audio context and play immediately to preserve user gesture context on iOS
+    initAudioContext();
+    
+    try {
+      const vp = video.play();
+      const ap = audio.play();
+      if (vp !== undefined) await vp;
+      if (ap !== undefined) await ap;
+      video.pause();
+      audio.pause();
+    } catch (e) {
+      console.error("Initial playback for export failed", e);
+      try {
+        await video.play();
+        video.pause();
+      } catch (err) {
+        console.error("Video fallback playback failed during export", err);
+      }
+    }
+
     const canvas = document.createElement('canvas');
     canvas.width = video.videoWidth || 720;
     canvas.height = video.videoHeight || 1280;
@@ -234,8 +269,15 @@ export function VideoPreview({ videoBlob, editScript, vibe, initialTexts = [], c
       });
     }
 
-    initAudioContext();
-    const canvasStream = canvas.captureStream(30);
+    const canvasStream = canvas.captureStream ? canvas.captureStream(30) : (canvas as any).mozCaptureStream ? (canvas as any).mozCaptureStream(30) : null;
+    
+    if (!canvasStream) {
+      console.error("captureStream not supported");
+      setIsExporting(false);
+      alert("Cihazınız veya tarayıcınız video dışa aktarmayı desteklemiyor.");
+      return;
+    }
+    
     const audioStream = audioDestRef.current?.stream;
     
     const tracks = [...canvasStream.getVideoTracks()];
@@ -326,22 +368,25 @@ export function VideoPreview({ videoBlob, editScript, vibe, initialTexts = [], c
     
     recorder.start();
     
-    // Fix for webm blobs not seeking properly in Chrome
-    if (videoUrl.startsWith('blob:')) {
-      video.src = videoUrl;
-    } else {
-      video.currentTime = 0;
-    }
+    video.currentTime = 0;
     audio.currentTime = 0;
     
     // We need to play to capture the stream
     try {
-      await video.play();
-      await audio.play();
+      const vp = video.play();
+      const ap = audio.play();
+      if (vp !== undefined) await vp;
+      if (ap !== undefined) await ap;
     } catch (e) {
       console.error("Playback failed during export", e);
-      setIsExporting(false);
-      return;
+      // Try fallback: just play video
+      try {
+        await video.play();
+      } catch (err) {
+        console.error("Video fallback playback failed during export", err);
+        setIsExporting(false);
+        return;
+      }
     }
     
     let duration = video.duration;
@@ -588,7 +633,7 @@ export function VideoPreview({ videoBlob, editScript, vibe, initialTexts = [], c
   return (
     <div className="relative w-full h-full bg-zinc-950 flex flex-col items-center justify-center overflow-hidden">
       {/* Audio Track */}
-      <audio ref={audioRef} src={customAudioUrl || VIBE_AUDIO[vibe] || VIBE_AUDIO['Energetic']} loop crossOrigin="anonymous" />
+      <audio ref={audioRef} src={customAudioUrl || VIBE_AUDIO[vibe] || VIBE_AUDIO['Energetic']} loop crossOrigin={customAudioUrl ? undefined : "anonymous"} />
 
       {/* Video Container */}
       <div 
@@ -611,6 +656,8 @@ export function VideoPreview({ videoBlob, editScript, vibe, initialTexts = [], c
             style={{ filter: currentSegment?.cssFilter && currentSegment.cssFilter !== 'none' ? currentSegment.cssFilter : 'none' }}
             onEnded={handleVideoEnded}
             playsInline
+            webkit-playsinline="true"
+            controls={false}
             muted // Mute original video audio
           />
         )}
