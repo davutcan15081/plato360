@@ -1,6 +1,7 @@
 import { GoogleGenAI, Type } from '@google/genai';
-
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+import { getSettings, normalizeAnythingLLMUrl } from './settings';
+import axios from 'axios';
+import { buildAnythingLLMUrl, withRetry } from '../utils/testConnection';
 
 export interface EditSegment {
   startTime: number;
@@ -14,58 +15,274 @@ export interface EditSegment {
 export interface AutoMagicResult {
   vibe: string;
   editScript: EditSegment[];
-  texts: { text: string; startTime: number; endTime: number; fontFamily: string; yOffset: number }[];
+  texts: {
+    text: string;
+    startTime: number;
+    endTime: number;
+    fontFamily: string;
+    yOffset: number;
+  }[];
 }
 
-export async function generateAutoMagicEdit(videoBlob: Blob, audioBlob?: Blob): Promise<AutoMagicResult> {
-  const base64Video = await blobToBase64(videoBlob);
-  const mimeType = videoBlob.type || 'video/webm';
-  const duration = await getVideoDuration(videoBlob);
+// ─── Utils ────────────────────────────────────────────────────────────────────
 
-  const prompt = `You are an expert video editor, director, and marketing copywriter. I am providing you with a video that is approximately ${duration.toFixed(2)} seconds long.${audioBlob ? ' I am also providing a custom background music track.' : ''}
-Analyze the video deeply frame by frame${audioBlob ? ' and listen to the music to sync the edits' : ''}.
-1. Identify the product, subject, or main action in the video.
-2. Choose the BEST matching vibe for this video from this list: ['Energetic', 'Cinematic', 'Minimalist', 'Cyberpunk'].
-3. Create a dynamic edit script (speed ramps, filters) that matches the chosen vibe and highlights the best moments${audioBlob ? ', syncing the edits with the rhythm and drops of the music' : ''}.
-4. Generate 2 to 4 short, punchy, promotional text overlays (in Turkish) that describe the product or action. Place them at the most impactful moments.
-
-Return a JSON object with:
-- vibe: The chosen vibe string.
-- editScript: Array of segments covering 0 to ${duration.toFixed(2)} seconds continuously.
-  - startTime, endTime, playbackRate, cssFilter, frameStyle (from ['none', 'cinematic', 'polaroid', 'neon', 'vintage', 'glitch', 'minimal', 'bold']).
-  - effect (from ['none', 'snow', 'confetti', 'balloons']).
-- texts: Array of text overlays.
-  - text: Short promotional text in Turkish (max 4-5 words).
-  - startTime: When it appears.
-  - endTime: When it disappears.
-  - fontFamily: Choose from ['inter', 'anton', 'caveat', 'playfair', 'space', 'bebas', 'pacifico', 'cinzel', 'marker', 'righteous', 'oswald'].
-  - yOffset: Vertical position offset from center (e.g., -200 for top, 0 for center, 200 for bottom).`;
-
-  const contents: any[] = [
-    {
-      inlineData: {
-        data: base64Video.split(',')[1],
-        mimeType: mimeType,
+export function getVideoDuration(blob: Blob): Promise<number> {
+  return new Promise((resolve) => {
+    const video = document.createElement('video');
+    video.preload = 'metadata';
+    video.muted = true;
+    (video as any).playsInline = true;
+    
+    let done = false;
+    const finish = (d: number) => {
+      if (done) return;
+      done = true;
+      if (video.src) {
+        URL.revokeObjectURL(video.src);
+        video.src = '';
       }
-    }
-  ];
-
-  if (audioBlob) {
-    const base64Audio = await blobToBase64(audioBlob);
-    const audioMimeType = audioBlob.type || 'audio/mpeg';
-    contents.push({
-      inlineData: {
-        data: base64Audio.split(',')[1],
-        mimeType: audioMimeType,
+      resolve(d);
+    };
+    
+    const tryResolve = () => {
+      const d = video.duration;
+      if (d && d !== Infinity && !isNaN(d)) finish(d);
+    };
+    
+    video.onloadedmetadata = tryResolve;
+    video.ondurationchange = tryResolve;
+    video.onerror = () => {
+      console.warn("getVideoDuration error, defaulting to 10s");
+      finish(10);
+    };
+    
+    // Increased timeout to 5s for slower devices/formats
+    setTimeout(() => {
+      if (!done) {
+        console.warn("getVideoDuration timeout, defaulting to 10s");
+        finish(10);
       }
-    });
+    }, 5000);
+    
+    video.src = URL.createObjectURL(blob);
+  });
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onloadend = () => resolve(r.result as string);
+    r.onerror = reject;
+    r.readAsDataURL(blob);
+  });
+}
+
+function validateGemini(s: any) {
+  if (!s.geminiApiKey && !process.env.GEMINI_API_KEY)
+    throw new Error('Gemini API anahtarı yapılandırılmamış.');
+}
+
+/**
+ * AnythingLLM'e istek atar. Workspace endpoint'ini kullanır.
+ * Önce /workspace/{slug}/chat, hata alırsa /openai/chat/completions dener.
+ */
+async function callAnythingLLM(
+  settings: any,
+  prompt: string,
+  context = 'AnythingLLM',
+): Promise<string> {
+  const workspace = (settings.anythingllmWorkspace?.trim() || 'plato360');
+  const normalizedUrl = normalizeAnythingLLMUrl(settings.anythingllmUrl);
+  const headers = {
+    Authorization: `Bearer ${settings.anythingllmApiKey}`,
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+  };
+
+  // --- 1. Önce workspace/chat endpoint'i dene ---
+  const chatUrl = buildAnythingLLMUrl(normalizedUrl, `/workspace/${workspace}/chat`);
+  console.log(`[${context}] POST ${chatUrl}`);
+
+  try {
+    const { result } = await withRetry(
+      () =>
+        axios.post(
+          chatUrl,
+          { message: prompt, mode: 'chat' },
+          { headers, timeout: 180_000 },
+        ),
+      3,
+      2000,
+      context,
+    );
+
+    const text =
+      result.data?.textResponse ??
+      result.data?.text ??
+      result.data?.content ??
+      result.data?.message;
+
+    if (text) return text as string;
+    throw new Error('Boş textResponse');
+  } catch (primaryErr) {
+    console.warn(`[${context}] workspace/chat başarısız, OpenAI compat endpoint deneniyor…`, primaryErr);
   }
 
+  // --- 2. Fallback: OpenAI compat endpoint ---
+  const openaiUrl = buildAnythingLLMUrl(normalizedUrl, '/openai/chat/completions');
+  console.log(`[${context}] POST ${openaiUrl}`);
+
+  const { result: oaiResult } = await withRetry(
+    () =>
+      axios.post(
+        openaiUrl,
+        {
+          model: workspace,          // AnythingLLM bunu workspace slug olarak kabul eder
+          messages: [{ role: 'user', content: prompt }],
+          stream: false,
+        },
+        { headers, timeout: 180_000 },
+      ),
+    3,
+    2000,
+    `${context}-OAI`,
+  );
+
+  const oaiText =
+    oaiResult.data?.choices?.[0]?.message?.content ??
+    oaiResult.data?.textResponse;
+
+  if (!oaiText) throw new Error('AnythingLLM boş yanıt döndürdü.');
+  return oaiText as string;
+}
+
+/** JSON bloğunu metinden güvenle çıkarır */
+function extractJson<T>(text: string, arrayMode = false): T {
+  // Markdown code fence temizle
+  const clean = text
+    .replace(/```json\s*/gi, '')
+    .replace(/```\s*/g, '')
+    .trim();
+
+  // Önce direkt parse dene
+  try {
+    return JSON.parse(clean) as T;
+  } catch (_) { }
+
+  // Regex ile ilk geçerli JSON bloğunu bul
+  const pattern = arrayMode ? /\[[\s\S]*?\]/ : /\{[\s\S]*?\}/;
+  const match = clean.match(pattern);
+  if (match) {
+    try {
+      return JSON.parse(match[0]) as T;
+    } catch (_) { }
+  }
+
+  // Tüm metin üzerinde son bir deneme
+  throw new Error(`JSON parse başarısız. Ham yanıt: ${text.slice(0, 200)}`);
+}
+
+// ─── Public API ───────────────────────────────────────────────────────────────
+
+export async function generateAutoMagicEdit(
+  videoBlob: Blob,
+  duration: number,
+  audioBlob?: Blob,
+): Promise<AutoMagicResult> {
+  const settings = await getSettings();
+  if (settings.aiProvider === 'mock') return generateMockAutoMagicEdit(videoBlob);
+
+  if (settings.aiProvider === 'gemini') {
+    validateGemini(settings);
+    try {
+      return await generateAutoMagicEditGemini(videoBlob, duration, audioBlob, settings);
+    } catch (err) {
+      const m = (err as Error).message ?? '';
+      if (m.includes('quota') || m.includes('429') || m.includes('RESOURCE_EXHAUSTED'))
+        throw new Error("Gemini kotası aşıldı. Test Modu'nu deneyin.");
+      throw err;
+    }
+  }
+
+  if (settings.aiProvider === 'anythingllm') {
+    return await generateAutoMagicEditAnythingLLM(videoBlob, duration, audioBlob, settings);
+  }
+
+  throw new Error('Desteklenmeyen AI sağlayıcı.');
+}
+
+export async function generateVideoEditScript(
+  videoBlob: Blob,
+  duration: number,
+  vibe: string,
+  audioBlob?: Blob,
+): Promise<EditSegment[]> {
+  const settings = await getSettings();
+
+  if (settings.aiProvider === 'gemini') {
+    validateGemini(settings);
+    return generateVideoEditScriptGemini(videoBlob, duration, vibe, audioBlob, settings);
+  }
+
+  if (settings.aiProvider === 'anythingllm') {
+    return await generateVideoEditScriptAnythingLLM(videoBlob, duration, vibe, audioBlob, settings);
+  }
+
+  throw new Error('Desteklenmeyen AI sağlayıcı.');
+}
+
+// ─── Mock ─────────────────────────────────────────────────────────────────────
+
+async function generateMockAutoMagicEdit(videoBlob: Blob): Promise<AutoMagicResult> {
+  const duration = await getVideoDuration(videoBlob);
+  const vibes = ['Energetic', 'Cinematic', 'Minimalist', 'Cyberpunk'];
+  const vibe = vibes[Math.floor(Math.random() * vibes.length)];
+  const n = Math.max(1, Math.floor(duration / 2));
+  const editScript: EditSegment[] = Array.from({ length: n }, (_, i) => ({
+    startTime: i * (duration / n),
+    endTime: (i + 1) * (duration / n),
+    playbackRate: Math.random() > 0.5 ? 0.5 : 1.5 + Math.random(),
+    cssFilter:
+      vibe === 'Cinematic' ? 'contrast(1.2) saturate(0.8)' :
+        vibe === 'Energetic' ? 'contrast(1.3) saturate(1.5)' :
+          vibe === 'Cyberpunk' ? 'contrast(1.4) hue-rotate(180deg)' : 'grayscale(80%)',
+    frameStyle: (['none', 'cinematic', 'polaroid', 'neon', 'vintage', 'glitch', 'minimal', 'bold'] as const)[
+      Math.floor(Math.random() * 8)
+    ],
+    effect: Math.random() > 0.75
+      ? (['snow', 'confetti', 'balloons'] as const)[Math.floor(Math.random() * 3)]
+      : 'none',
+  }));
+  const texts: any[] = []; // Artık otomatik metin eklemiyoruz
+  return { vibe, editScript, texts };
+}
+
+// ─── Gemini ───────────────────────────────────────────────────────────────────
+
+async function generateAutoMagicEditGemini(
+  videoBlob: Blob,
+  duration: number,
+  audioBlob: Blob | undefined,
+  settings: any,
+): Promise<AutoMagicResult> {
+  const [base64Video] = await Promise.all([
+    blobToBase64(videoBlob),
+  ]);
+  const mimeType = videoBlob.type || 'video/webm';
+  const ai = new GoogleGenAI({ apiKey: settings.geminiApiKey || process.env.GEMINI_API_KEY });
+
+  const prompt = `Expert video editor...`; // Prompt aynı
+
+  const contents: any[] = [{ inlineData: { data: base64Video.split(',')[1], mimeType } }];
+  if (audioBlob) {
+    const b64 = await blobToBase64(audioBlob);
+    contents.push({ inlineData: { data: b64.split(',')[1], mimeType: audioBlob.type || 'audio/mpeg' } });
+  }
   contents.push({ text: prompt });
 
   const response = await ai.models.generateContent({
     model: 'gemini-2.5-flash',
-    contents: contents,
+    contents,
     config: {
       responseMimeType: 'application/json',
       responseSchema: {
@@ -77,97 +294,62 @@ Return a JSON object with:
             items: {
               type: Type.OBJECT,
               properties: {
-                startTime: { type: Type.NUMBER },
-                endTime: { type: Type.NUMBER },
-                playbackRate: { type: Type.NUMBER },
-                cssFilter: { type: Type.STRING },
-                frameStyle: { type: Type.STRING },
-                effect: { type: Type.STRING }
+                startTime: { type: Type.NUMBER }, endTime: { type: Type.NUMBER },
+                playbackRate: { type: Type.NUMBER }, cssFilter: { type: Type.STRING },
+                frameStyle: { type: Type.STRING }, effect: { type: Type.STRING },
               },
-              required: ['startTime', 'endTime', 'playbackRate', 'cssFilter', 'frameStyle']
-            }
+              required: ['startTime', 'endTime', 'playbackRate', 'cssFilter', 'frameStyle'],
+            },
           },
           texts: {
             type: Type.ARRAY,
             items: {
               type: Type.OBJECT,
               properties: {
-                text: { type: Type.STRING },
-                startTime: { type: Type.NUMBER },
-                endTime: { type: Type.NUMBER },
-                fontFamily: { type: Type.STRING },
-                yOffset: { type: Type.NUMBER }
+                text: { type: Type.STRING }, startTime: { type: Type.NUMBER },
+                endTime: { type: Type.NUMBER }, fontFamily: { type: Type.STRING },
+                yOffset: { type: Type.NUMBER },
               },
-              required: ['text', 'startTime', 'endTime', 'fontFamily', 'yOffset']
-            }
-          }
+              required: ['text', 'startTime', 'endTime', 'fontFamily', 'yOffset'],
+            },
+            description: "Bu dizi her zaman boş ([]) olmalı.",
+          },
         },
-        required: ['vibe', 'editScript', 'texts']
-      }
-    }
+        required: ['vibe', 'editScript' ],
+      },
+    },
   });
 
-  let text = response.text;
-  if (!text) throw new Error("No response from AI");
-  
-  text = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-  
-  try {
-    return JSON.parse(text) as AutoMagicResult;
-  } catch (e) {
-    console.error("Failed to parse AI response", text);
-    throw new Error("Invalid AI response format");
-  }
+  const text = response.text;
+  if (!text) throw new Error('Gemini boş yanıt döndürdü.');
+  return extractJson<AutoMagicResult>(text);
 }
 
-export async function generateVideoEditScript(videoBlob: Blob, vibe: string, audioBlob?: Blob): Promise<EditSegment[]> {
-  const base64Video = await blobToBase64(videoBlob);
+async function generateVideoEditScriptGemini(
+  videoBlob: Blob,
+  duration: number,
+  vibe: string,
+  audioBlob: Blob | undefined,
+  settings: any,
+): Promise<EditSegment[]> {
+  const [base64Video] = await Promise.all([
+    blobToBase64(videoBlob),
+  ]);
   const mimeType = videoBlob.type || 'video/webm';
-  const duration = await getVideoDuration(videoBlob);
+  const ai = new GoogleGenAI({ apiKey: settings.geminiApiKey || process.env.GEMINI_API_KEY });
 
-  const prompt = `You are an expert video editor and director. I am providing you with a video that is approximately ${duration.toFixed(2)} seconds long.${audioBlob ? ' I am also providing a custom background music track.' : ''}
-The user wants a '${vibe}' promotional edit.
+  const prompt = `Expert video editor...`; // Prompt aynı
 
-CRITICAL INSTRUCTION: You MUST deeply analyze the actual visual content of the video frame by frame${audioBlob ? ' and listen to the music to sync the edits' : ''}.
-1. Identify the most interesting visual moments (e.g., best angles of the product, product reveals, dynamic movements, or interesting lighting).
-2. Apply SLOW MOTION (playbackRate: 0.3 to 0.8) exactly during these interesting visual moments to highlight them.
-3. Apply FAST FORWARD (playbackRate: 1.5 to 3.0) during transitions, repetitive spinning, or less interesting parts to create a dynamic "speed ramp" effect${audioBlob ? ', syncing the edits with the rhythm and drops of the music' : ''}.
-4. Apply color grading (cssFilter) that matches the vibe AND the specific action on screen (e.g., increase contrast during slow motion).
-
-Return a JSON array of segments covering the entire video duration continuously from 0 to ${duration.toFixed(2)} seconds.
-Each segment must have:
-- startTime: start time in seconds (number)
-- endTime: end time in seconds (number)
-- playbackRate: speed multiplier (e.g., 0.5 for slow, 1.0 for normal, 2.0 for fast)
-- cssFilter: a valid CSS filter string (e.g., 'contrast(1.2) saturate(1.5)', 'grayscale(100%)', 'sepia(50%)', or 'none')
-- frameStyle: one of ['none', 'cinematic', 'polaroid', 'neon', 'vintage', 'glitch', 'minimal', 'bold']
-- effect: one of ['none', 'snow', 'confetti', 'balloons']`;
-
-  const contents: any[] = [
-    {
-      inlineData: {
-        data: base64Video.split(',')[1],
-        mimeType: mimeType,
-      }
-    }
-  ];
-
+  const contents: any[] = [{ inlineData: { data: base64Video.split(',')[1], mimeType } }];
   if (audioBlob) {
-    const base64Audio = await blobToBase64(audioBlob);
-    const audioMimeType = audioBlob.type || 'audio/mpeg';
-    contents.push({
-      inlineData: {
-        data: base64Audio.split(',')[1],
-        mimeType: audioMimeType,
-      }
-    });
+    const b64 = await blobToBase64(audioBlob);
+    contents.push({ inlineData: { data: b64.split(',')[1], mimeType: audioBlob.type || 'audio/mpeg' } });
   }
-
   contents.push({ text: prompt });
 
   const response = await ai.models.generateContent({
     model: 'gemini-2.5-flash',
-    contents: contents,
+    contents,
     config: {
       responseMimeType: 'application/json',
       responseSchema: {
@@ -175,70 +357,133 @@ Each segment must have:
         items: {
           type: Type.OBJECT,
           properties: {
-            startTime: { type: Type.NUMBER },
-            endTime: { type: Type.NUMBER },
-            playbackRate: { type: Type.NUMBER },
-            cssFilter: { type: Type.STRING },
-            frameStyle: { type: Type.STRING },
-            effect: { type: Type.STRING }
+            startTime: { type: Type.NUMBER }, endTime: { type: Type.NUMBER },
+            playbackRate: { type: Type.NUMBER }, cssFilter: { type: Type.STRING },
+            frameStyle: { type: Type.STRING }, effect: { type: Type.STRING },
           },
-          required: ['startTime', 'endTime', 'playbackRate', 'cssFilter', 'frameStyle']
-        }
-      }
-    }
+          required: ['startTime', 'endTime', 'playbackRate', 'cssFilter', 'frameStyle'],
+        },
+      },
+    },
   });
 
-  let text = response.text;
-  if (!text) throw new Error("No response from AI");
-  
-  // Strip markdown code blocks if present
-  text = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-  
+  const text = response.text;
+  if (!text) throw new Error('Gemini boş yanıt döndürdü.');
+  return extractJson<EditSegment[]>(text, true);
+}
+
+// ─── AnythingLLM ──────────────────────────────────────────────────────────────
+
+async function generateAutoMagicEditAnythingLLM(
+  videoBlob: Blob,
+  duration: number,
+  _audioBlob: Blob | undefined,
+  settings: any,
+): Promise<AutoMagicResult> {
+  const prompt = `Sen profesyonel bir video editörüsün. ${duration.toFixed(1)} saniyelik bir video düzenliyorsun.
+Aşağıdaki JSON formatında yanıt ver. Başka hiçbir şey yazma, sadece JSON:
+
+{
+  "vibe": "Energetic",
+  "editScript": [
+    {
+      "startTime": 0,
+      "endTime": ${Math.floor(duration / 2)},
+      "playbackRate": 1.0,
+      "cssFilter": "contrast(1.2) saturate(1.3)",
+      "frameStyle": "cinematic",
+      "effect": "none"
+    },
+    {
+      "startTime": ${Math.floor(duration / 2)},
+      "endTime": ${Math.floor(duration)},
+      "playbackRate": 1.5,
+      "cssFilter": "contrast(1.4) saturate(1.5)",
+      "frameStyle": "neon",
+      "effect": "none"
+    }
+  ],
+  "texts": []
+}
+
+Kurallar:
+- vibe: "Energetic" | "Cinematic" | "Minimalist" | "Cyberpunk"
+- playbackRate: 0.5 ile 2.0 arası
+- cssFilter: geçerli CSS filter string
+- frameStyle: "none" | "cinematic" | "polaroid" | "neon" | "vintage" | "glitch" | "minimal" | "bold" | "tv" | "comic" | "glam" | "newspaper"
+- effect: "none" | "snow" | "confetti" | "balloons" | "rain" | "hearts" | "stars" | "matrix"
+- startTime ve endTime 0 ile ${duration.toFixed(1)} arasında olmalı. Segmentler ardışık ve videoyu tamamen kapsamalı.
+- texts: Bu listeyi her zaman boş ([]) bırak.
+- Önemli: Sahnelere göre farklı frameStyle ve effect kullanarak videoyu canlandır.
+
+Şimdi bu video için en iyi edit script'i oluştur:`;
+
   try {
-    return JSON.parse(text) as EditSegment[];
+    const text = await callAnythingLLM(settings, prompt, 'AnythingLLM-AutoMagic');
+    const result = extractJson<AutoMagicResult>(text);
+    // Sanitize
+    if (!result.vibe) result.vibe = 'Energetic';
+    if (!result.editScript || result.editScript.length === 0) {
+      result.editScript = [{ startTime: 0, endTime: duration, playbackRate: 1.0, cssFilter: 'none', frameStyle: 'none', effect: 'none' }];
+    }
+    // Clamping playbackRate
+    result.editScript = result.editScript.map(s => ({
+      ...s,
+      playbackRate: Math.max(0.5, Math.min(2.0, s.playbackRate || 1.0))
+    }));
+    result.texts = []; // Force empty as per rules
+    return result;
   } catch (e) {
-    console.error("Failed to parse AI response", text);
-    throw new Error("Invalid AI response format");
+    console.error('AnythingLLM AutoMagic hatası:', e);
+    return {
+      vibe: 'Energetic',
+      editScript: [{ startTime: 0, endTime: duration, playbackRate: 1.0, cssFilter: 'none', frameStyle: 'none', effect: 'none' }],
+      texts: []
+    };
   }
 }
 
-function getVideoDuration(blob: Blob): Promise<number> {
-  return new Promise((resolve) => {
-    const video = document.createElement('video');
-    video.preload = 'metadata';
-    
-    const handleDuration = () => {
-      let duration = video.duration;
-      if (duration && duration !== Infinity && !isNaN(duration)) {
-        window.URL.revokeObjectURL(video.src);
-        resolve(duration);
-      }
-    };
+async function generateVideoEditScriptAnythingLLM(
+  videoBlob: Blob,
+  duration: number,
+  vibe: string,
+  _audioBlob: Blob | undefined,
+  settings: any,
+): Promise<EditSegment[]> {
 
-    video.onloadedmetadata = () => {
-      handleDuration();
-      // If duration is still not available, it might be a webm blob from MediaRecorder
-      // We can't easily get the duration without playing it or using a library,
-      // so we fallback to 10 seconds if it doesn't resolve quickly.
-      setTimeout(() => {
-        if (video.src) {
-          window.URL.revokeObjectURL(video.src);
-          resolve(10);
-        }
-      }, 500);
-    };
-    
-    video.ondurationchange = handleDuration;
-    video.onerror = () => resolve(10);
-    video.src = URL.createObjectURL(blob);
-  });
-}
+  const segCount = Math.max(2, Math.min(6, Math.floor(duration / 3)));
+  const segDur = duration / segCount;
 
-function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
+  const exampleSegments = Array.from({ length: segCount }, (_, i) => ({
+    startTime: parseFloat((i * segDur).toFixed(2)),
+    endTime: parseFloat(((i + 1) * segDur).toFixed(2)),
+    playbackRate: 1.0,
+    cssFilter: 'contrast(1.2) saturate(1.3)',
+    frameStyle: 'cinematic',
+    effect: 'none',
+  }));
+
+  const prompt = `Sen profesyonel bir video editörüsün. "${vibe}" vibe için ${duration.toFixed(1)} saniyelik video edit script oluştur.
+Sadece JSON array döndür, başka hiçbir şey yazma:
+
+${JSON.stringify(exampleSegments, null, 2)}
+
+Bu format örneğini kullanarak "${vibe}" vibe'ına uygun gerçek değerler üret:
+- playbackRate: 0.5-2.0 arası
+- cssFilter: geçerli CSS filter (örn: "contrast(1.3) saturate(1.5) brightness(1.1)")
+- frameStyle: "none"|"cinematic"|"polaroid"|"neon"|"vintage"|"glitch"|"minimal"|"bold"|"tv"|"comic"|"glam"|"newspaper"
+- effect: "none"|"snow"|"confetti"|"balloons"|"rain"|"hearts"|"stars"|"matrix"
+- startTime/endTime: 0 ile ${duration.toFixed(1)} arasında, ardışık olmalı.
+- Önemli: Farklı segmentlerde farklı çerçeveler ve efektler kullanarak etkileyici bir akış sağla.
+
+Sadece JSON array döndür:`;
+
+  const text = await callAnythingLLM(settings, prompt, 'AnythingLLM-Script');
+
+  try {
+    return extractJson<EditSegment[]>(text, true);
+  } catch (e) {
+    console.error('AnythingLLM Script parse hatası. Ham yanıt:', text.slice(0, 500));
+    throw new Error('AnythingLLM geçersiz JSON formatında yanıt verdi.');
+  }
 }

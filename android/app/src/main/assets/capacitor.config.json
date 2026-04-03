@@ -1,5 +1,9 @@
 {
 	"appId": "com.example.app",
 	"appName": "react-example",
-	"webDir": "dist"
+	"webDir": "dist",
+	"server": {
+		"cleartext": true,
+		"androidScheme": "http"
+	}
 }
