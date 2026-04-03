@@ -1,8 +1,8 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { EditSegment } from '../services/ai';
 import {
-  Play, Pause, Type, Trash2, Check, Download,
-  Loader2, AlignLeft, AlignCenter, AlignRight, Frame, Sparkles, X, Menu
+  Play, Pause, RotateCcw, Type, Trash2, Check, Download,
+  Loader2, AlignLeft, AlignCenter, AlignRight, Frame, Sparkles, X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Filesystem, Directory } from '@capacitor/filesystem';
@@ -33,15 +33,15 @@ interface UserText {
 }
 
 const VIBE_AUDIO: Record<string, string> = {
-  'Energetic': 'https://raw.githubusercontent.com/photonstorm/phalcon3-examples/master/public/assets/audio/bodenstaendig_2000_in_rock_4bit.mp3',
-  'Cinematic': 'https://raw.githubusercontent.com/photonstorm/phalcon3-examples/master/public/assets/audio/CatAstroPhi_shmup_normal.mp3',
-  'Minimalist': 'https://raw.githubusercontent.com/photonstorm/phalcon3-examples/master/public/assets/audio/tech/bass.mp3',
-  'Cyberpunk': 'https://raw.githubusercontent.com/photonstorm/phalcon3-examples/master/public/assets/audio/oedipus_wizball_highscore.mp3',
+  'Energetic': 'https://raw.githubusercontent.com/photonstorm/phaser3-examples/master/public/assets/audio/bodenstaendig_2000_in_rock_4bit.mp3',
+  'Cinematic': 'https://raw.githubusercontent.com/photonstorm/phaser3-examples/master/public/assets/audio/CatAstroPhi_shmup_normal.mp3',
+  'Minimalist': 'https://raw.githubusercontent.com/photonstorm/phaser3-examples/master/public/assets/audio/tech/bass.mp3',
+  'Cyberpunk': 'https://raw.githubusercontent.com/photonstorm/phaser3-examples/master/public/assets/audio/oedipus_wizball_highscore.mp3',
 };
 
 const FONTS = ['inter', 'anton', 'caveat', 'playfair', 'bebas', 'pacifico', 'cinzel', 'oswald', 'montserrat', 'quicksand', 'lobster', 'abril'];
 
-const FRAME_OPTIONS = ['none', 'cinematic', 'neon', 'aurora', 'cyber', 'fire', 'ice', 'galaxy', 'retro', 'gold', 'crystal', 'minimal', 'tv', 'comic', 'newspaper'];
+const FRAME_OPTIONS = ['none', 'cinematic', 'polaroid', 'neon', 'vintage', 'glitch', 'minimal', 'bold', 'tv', 'comic', 'glam', 'newspaper'];
 const EFFECT_OPTIONS = [
   { key: 'none', label: 'Yok' },
   { key: 'snow', label: 'Kar' },
@@ -77,16 +77,15 @@ export function VideoPreview({
   const [videoDuration, setVideoDuration] = useState(0);
   const [currentSeg, setCurrentSeg] = useState<EditSegment | null>(null);
   const [customAudioUrl, setCustomAudioUrl] = useState<string | null>(null);
-
   const [userTexts, setUserTexts] = useState<UserText[]>(() =>
     initialTexts.map((t, i) => ({
       id: `auto-${i}`, text: t.text, fontFamily: t.fontFamily || 'inter',
       startTime: t.startTime, endTime: t.endTime, yOffset: t.yOffset || 0
     }))
   );
+
   const [visibleTexts, setVisibleTexts] = useState<UserText[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-
   const [userFrame, setUserFrame] = useState(editScript[0]?.frameStyle || 'none');
   const [userEffect, setUserEffect] = useState(editScript[0]?.effect || 'none');
   const [activeFrame, setActiveFrame] = useState(editScript[0]?.frameStyle || 'none');
@@ -94,20 +93,14 @@ export function VideoPreview({
   const [customFrames, setCustomFrames] = useState<string[]>([]);
   const [frameTiming, setFrameTiming] = useState({ startTime: 0, endTime: 0, isFull: true });
   const [effectTiming, setEffectTiming] = useState({ startTime: 0, endTime: 0, isFull: true });
-
   const [openPanel, setOpenPanel] = useState<Panel>(null);
   const togglePanel = (p: Panel) => setOpenPanel(prev => prev === p ? null : p);
-
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
 
   /* effects */
   useEffect(() => {
-    if (customAudioBlob) {
-      const u = URL.createObjectURL(customAudioBlob);
-      setCustomAudioUrl(u);
-      return () => URL.revokeObjectURL(u);
-    }
+    if (customAudioBlob) { const u = URL.createObjectURL(customAudioBlob); setCustomAudioUrl(u); return () => URL.revokeObjectURL(u); }
   }, [customAudioBlob]);
 
   useEffect(() => { setVideoUrl(initialVideoUrl); }, [initialVideoUrl]);
@@ -120,19 +113,25 @@ export function VideoPreview({
   }, [videoUrl]);
 
   useEffect(() => {
-    let raf: number;
+    const time = videoRef.current?.currentTime ?? 0;
+    const vis = userTexts.filter(t => t.startTime === undefined || (time >= (t.startTime ?? 0) && time <= (t.endTime ?? Infinity)));
+    setVisibleTexts(vis); visRef.current = vis.map(t => t.id).join(',');
+  }, [userTexts]);
+
+  useEffect(() => {
+    let raf: number, lastRate = -1;
     const tick = () => {
       const v = videoRef.current;
       if (v) {
         const time = v.currentTime;
         const seg = editScript.find(s => time >= s.startTime && time <= s.endTime) ?? editScript.at(-1)!;
         if (seg && seg !== segRef.current) { setCurrentSeg(seg); segRef.current = seg; }
-        
-        // Timing logic for Frame and Effect
+        if (seg) { let r = seg.playbackRate ?? 1; if (!r || isNaN(r) || r <= 0) r = 1; r = Math.min(5, Math.max(0.5, r)); if (r !== lastRate) { v.playbackRate = r; lastRate = r; } }
+
         let rf = userFrame, re = userEffect;
-        if (!frameTiming.isFull && (time < frameTiming.startTime || time > frameTiming.endTime)) rf = 'none';
-        if (!effectTiming.isFull && (time < effectTiming.startTime || time > effectTiming.endTime)) re = 'none';
-        
+        if (!frameTiming.isFull && (time < frameTiming.startTime || time > frameTiming.endTime)) rf = seg?.frameStyle || 'none';
+        if (!effectTiming.isFull && (time < effectTiming.startTime || time > effectTiming.endTime)) re = seg?.effect || 'none';
+
         if (rf !== activeFrame) setActiveFrame(rf);
         if (re !== activeEffect) setActiveEffect(re);
 
@@ -146,8 +145,9 @@ export function VideoPreview({
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [editScript, userTexts, userFrame, userEffect, frameTiming, effectTiming, activeFrame, activeEffect]);
+  }, [editScript, userTexts, userFrame, userEffect, frameTiming, effectTiming]);
 
+  /* helpers */
   const fmt = (s: number) => {
     if (!s || isNaN(s) || s === Infinity) return '0:00';
     return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
@@ -156,7 +156,7 @@ export function VideoPreview({
   const initAudio = () => {
     try {
       if (!audioCtxRef.current && audioRef.current) {
-        const AC = (window as any).AudioContext || (window as any).webkitAudioContext;
+        const AC = window.AudioContext || (window as any).webkitAudioContext;
         const ctx = new AC(); audioCtxRef.current = ctx;
         const src = ctx.createMediaElementSource(audioRef.current);
         const dest = ctx.createMediaStreamDestination();
@@ -166,187 +166,391 @@ export function VideoPreview({
     } catch { }
   };
 
+  /* playback */
   const togglePlay = async () => {
     initAudio();
     const v = videoRef.current, a = audioRef.current;
     if (!v || !a) return;
-    if (isPlaying) {
-      v.pause(); a.pause(); setIsPlaying(false);
-    } else {
+    if (isPlaying) { v.pause(); a.pause(); setIsPlaying(false); }
+    else {
       v.muted = true;
-      try { await v.play(); await a.play(); setIsPlaying(true); } catch { setIsPlaying(false); }
+      let ok = false;
+      try { await v.play(); ok = true; } catch { }
+      try { await a.play(); } catch { }
+      if (ok) setIsPlaying(true);
+      else { a.pause(); alert('Video oynatılamadı.'); }
     }
   };
 
   const handleEnded = () => {
-    if (!isExporting) {
-      setIsPlaying(false);
-      if (audioRef.current) { audioRef.current.pause(); audioRef.current.currentTime = 0; }
-    }
+    if (!isExporting) { setIsPlaying(false); if (audioRef.current) { audioRef.current.pause(); audioRef.current.currentTime = 0; } }
   };
 
+  /* text */
   const addText = () => {
     const id = Date.now().toString();
-    setUserTexts(p => [...p, {
-      id, text: 'YENİ METİN', fontFamily: 'inter',
-      startTime: 0, endTime: videoDuration || 10,
-      scale: 1, yOffset: 0, xOffset: 0, textAlign: 'center'
-    }]);
+    setUserTexts(p => [...p, { id, text: 'YENİ METİN', fontFamily: 'inter', startTime: 0, endTime: videoDuration || 10, scale: 1, yOffset: 0, xOffset: 0, textAlign: 'center' }]);
     setSelectedId(id); setOpenPanel('text');
   };
 
   const sel = userTexts.find(t => t.id === selectedId);
-  const updateSel = (patch: Partial<UserText>) =>
-    setUserTexts(ts => ts.map(t => t.id === selectedId ? { ...t, ...patch } : t));
+  const updateSel = (patch: Partial<UserText>) => setUserTexts(ts => ts.map(t => t.id === selectedId ? { ...t, ...patch } : t));
 
-  /* ── UPDATED: Canlı ve Tematik Çerçeveler ───────────────────────────────────── */
+  /* frame cls */
   const getFrameCls = (f?: string) => {
     const m: Record<string, string> = {
-      cinematic: 'border-y-[10vh] border-black shadow-[inset_0_0_80px_rgba(0,0,0,0.9)] relative before:absolute before:inset-0 before:border-y-[1px] before:border-white/10',
-      neon: 'border-[4px] border-fuchsia-500 shadow-[0_0_20px_#ec4899,0_0_40px_#ec4899,inset_0_0_20px_#ec4899] animate-pulse',
-      aurora: 'border-[8px] border-transparent bg-gradient-to-r from-indigo-500 via-purple-500 to-teal-500 bg-clip-border shadow-[0_0_40px_rgba(168,85,247,0.5)]',
-      cyber: 'border-2 border-cyan-400 shadow-[0_0_15px_#22d3ee] before:absolute before:top-0 before:left-0 before:w-4 before:h-4 before:border-t-4 before:border-l-4 before:border-yellow-400 after:absolute after:bottom-0 after:right-0 after:w-4 after:h-4 after:border-b-4 after:border-r-4 after:border-yellow-400',
-      fire: 'border-[6px] border-orange-600 shadow-[0_0_40px_#ea580c,0_0_70px_#f43f5e] after:absolute after:inset-0 after:bg-gradient-to-t after:from-orange-500/10 after:to-transparent',
-      ice: 'border-[10px] border-blue-100/50 shadow-[0_0_30px_#bae6fd,inset_0_0_20px_white] backdrop-blur-[2px]',
-      galaxy: 'border-[8px] border-indigo-900 shadow-[0_0_50px_#4338ca,inset_0_0_40px_black] relative overflow-hidden before:absolute before:inset-0 before:bg-[radial-gradient(circle,white_1px,transparent_1px)] before:bg-[size:20px_20px] before:opacity-20',
-      retro: 'border-[10px] border-pink-500 shadow-[6px_6px_0px_#4ade80,-6px_-6px_0px_#8b5cf6]',
-      gold: 'border-[12px] border-transparent bg-gradient-to-br from-yellow-200 via-yellow-500 to-amber-700 bg-clip-border shadow-[0_10px_30px_rgba(0,0,0,0.5)]',
-      crystal: 'border-[10px] border-white/40 shadow-[0_0_25px_white,inset_0_0_15px_rgba(255,255,255,0.5)] backdrop-blur-md',
-      minimal: 'border-[1px] border-white/20 m-6 shadow-2xl',
-      tv: 'rounded-[40px] border-[18px] border-zinc-800 shadow-[0_0_0_8px_#27272a,inset_0_0_80px_black] overflow-hidden',
-      comic: 'border-[8px] border-black shadow-[10px_10px_0_black] bg-white',
-      newspaper: 'border-[25px] border-zinc-200 grayscale contrast-125 shadow-[inset_0_0_40px_black] border-style-double',
+      cinematic: 'border-y-[8vh] border-black',
+      polaroid: 'border-[16px] border-b-[64px] border-white shadow-2xl',
+      neon: 'border-4 border-pink-500 shadow-[0_0_30px_rgba(236,72,153,0.8)]',
+      vintage: 'border-[20px] border-[#8b5a2b]',
+      glitch: 'border-l-4 border-r-4 border-l-red-500 border-r-blue-500',
+      minimal: 'border-[8px] border-zinc-100 rounded-3xl',
+      bold: 'border-[12px] border-yellow-400',
+      tv: 'border-[20px] border-zinc-900 rounded-[40px]',
+      comic: 'border-[10px] border-black shadow-[10px_10px_0_rgba(0,0,0,1)]',
+      glam: 'border-[15px] border-yellow-500',
+      newspaper: 'border-[25px] border-zinc-300 grayscale contrast-125',
     };
-    return m[f ?? 'none'] ?? '';
+    return m[f] ?? '';
   };
 
   const getFontCls = (f?: string) => {
     const m: Record<string, string> = {
-      anton: 'font-["Anton"] tracking-wide uppercase',
-      caveat: 'font-["Caveat"] capitalize',
-      playfair: 'font-["Playfair_Display"] italic capitalize',
-      bebas: 'font-["Bebas_Neue"] tracking-wider uppercase',
-      pacifico: 'font-["Pacifico"] capitalize font-normal',
-      cinzel: 'font-["Cinzel"] tracking-widest uppercase font-bold',
-      oswald: 'font-["Oswald"] tracking-tight uppercase font-bold',
-      montserrat: 'font-["Montserrat"] font-extrabold tracking-tight',
-      quicksand: 'font-["Quicksand"] font-bold',
-      lobster: 'font-["Lobster"]',
-      abril: 'font-["Abril_Fatface"]',
+      anton: 'font-["Anton"] tracking-wide uppercase', caveat: 'font-["Caveat"] capitalize',
+      playfair: 'font-["Playfair_Display"] italic capitalize', bebas: 'font-["Bebas_Neue"] tracking-wider uppercase',
+      pacifico: 'font-["Pacifico"] capitalize font-normal', cinzel: 'font-["Cinzel"] tracking-widest uppercase font-bold',
+      oswald: 'font-["Oswald"] tracking-tight uppercase font-bold', montserrat: 'font-["Montserrat"] font-extrabold tracking-tight',
+      quicksand: 'font-["Quicksand"] font-bold', lobster: 'font-["Lobster"]', abril: 'font-["Abril_Fatface"]',
     };
-    return m[f ?? ''] ?? 'font-["Inter"] font-black tracking-tighter uppercase';
+    return m[f] ?? 'font-["Inter"] font-black tracking-tighter uppercase';
   };
 
-  /* ── Export Video ── */
+  /* export */
   const exportVideo = async () => {
     if (!videoRef.current || !audioRef.current || isExporting) return;
-    setIsExporting(true); setExportProgress(0); setIsPlaying(false);
+    setIsExporting(true); setExportProgress(0);
+    setIsPlaying(false);
     const video = videoRef.current, audio = audioRef.current;
     initAudio();
+    try { await video.play(); video.pause(); } catch { }
+    try { await audio.play(); audio.pause(); } catch { }
 
     const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth || 720;
-    canvas.height = video.videoHeight || 1280;
+    canvas.width = video.videoWidth || 720; canvas.height = video.videoHeight || 1280;
     const ctx = canvas.getContext('2d');
     if (!ctx) { setIsExporting(false); return; }
 
-    const cs = (canvas as any).captureStream?.(30) || (canvas as any).mozCaptureStream?.(30);
+    let frameImg: HTMLImageElement | null = null;
+    if (activeFrame.startsWith('blob:')) {
+      frameImg = new Image(); frameImg.src = activeFrame;
+      await new Promise(r => { frameImg!.onload = r; frameImg!.onerror = r; });
+    }
+
+    const cs = canvas.captureStream?.(30) ?? (canvas as any).mozCaptureStream?.(30);
+    if (!cs) { setIsExporting(false); alert('Dışa aktarma desteklenmiyor.'); return; }
     const as = audioDestRef.current?.stream;
-    const rec = new MediaRecorder(new MediaStream([...cs.getVideoTracks(), ...(as?.getAudioTracks() ?? [])]), { mimeType: 'video/mp4' });
+    const rec = new MediaRecorder(new MediaStream([...cs.getVideoTracks(), ...(as?.getAudioTracks() ?? [])]),
+      { mimeType: ['video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm'].find(t => MediaRecorder.isTypeSupported(t)) ?? 'video/mp4' });
     const chunks: Blob[] = [];
-    rec.ondataavailable = e => chunks.push(e.data);
+    rec.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+
+    const onVis = () => {
+      if (document.hidden && rec.state === 'recording') { rec.pause(); video.pause(); audio.pause(); }
+      else if (!document.hidden && rec.state === 'paused') { rec.resume(); video.play().catch(() => { }); audio.play().catch(() => { }); }
+    };
+    document.addEventListener('visibilitychange', onVis);
 
     rec.onstop = async () => {
+      document.removeEventListener('visibilitychange', onVis);
       const blob = new Blob(chunks, { type: 'video/mp4' });
-      const fn = `spin-${Date.now()}.mp4`;
+      const fn = `spinedit-${Date.now()}.mp4`;
       if (Capacitor.isNativePlatform()) {
-        const reader = new FileReader(); reader.readAsDataURL(blob);
-        reader.onloadend = async () => {
-          const s = await Filesystem.writeFile({ path: fn, data: reader.result as string, directory: Directory.Cache });
-          await CapShare.share({ url: s.uri });
-        };
+        try {
+          const reader = new FileReader();
+          reader.readAsDataURL(blob);
+          reader.onloadend = async () => {
+            const saved = await Filesystem.writeFile({ path: fn, data: reader.result as string, directory: Directory.Cache });
+            await CapShare.share({ title: 'SpinEdit Video', url: saved.uri, dialogTitle: 'Paylaş' });
+          };
+        } catch { alert('Kayıt hatası.'); }
       } else {
         const url = URL.createObjectURL(blob);
         Object.assign(document.createElement('a'), { href: url, download: fn }).click();
+        URL.revokeObjectURL(url);
       }
-      setIsExporting(false);
+      setIsExporting(false); setExportProgress(100);
+      setTimeout(() => setExportProgress(0), 800);
     };
 
-    rec.start(); video.currentTime = 0; audio.currentTime = 0;
-    await video.play(); await audio.play();
+    rec.start(); video.currentTime = 0; audio.currentTime = 0; video.muted = true;
+    // Canvas ölçümünden ÖNCE fontların tam yüklenmesini bekle
+    await document.fonts.ready;
+    if (userTexts.length > 0) {
+      await Promise.allSettled(
+        userTexts.map(tx =>
+          document.fonts.load(`bold ${Math.round(canvas.width * 0.1 * (tx.scale || 1))}px ${tx.fontFamily}`)
+        )
+      );
+    }
+    try { await video.play(); await audio.play(); } catch { setIsExporting(false); rec.stop(); return; }
+
+    let dur = video.duration;
+    if (!dur || dur === Infinity || isNaN(dur)) dur = editScript.at(-1)?.endTime ?? 10;
+    let lastRate = -1, curFx = '', parts: any[] = [];
+
+    const initPfx = (fx: string) => {
+      if (fx === curFx) return; curFx = fx;
+      if (fx === 'snow') parts = Array.from({ length: 50 }).map(() => ({ x: Math.random() * canvas.width, y: Math.random() * canvas.height, size: Math.random() * 4 + 2, sy: Math.random() * 3 + 2, sx: Math.random() * 2 - 1 }));
+      else if (fx === 'confetti') { const cs = ['#f00', '#0f0', '#00f', '#ff0', '#f0f', '#0ff']; parts = Array.from({ length: 100 }).map(() => ({ x: Math.random() * canvas.width, y: Math.random() * canvas.height, size: Math.random() * 8 + 4, c: cs[0 | Math.random() * 6], sy: Math.random() * 5 + 3, sx: Math.random() * 4 - 2, r: Math.random() * 360, rs: Math.random() * 10 - 5 })); }
+      else if (fx === 'balloons') { const cs = ['#ff595e', '#ffca3a', '#8ac926', '#1982c4', '#6a4c93']; parts = Array.from({ length: 15 }).map(() => ({ x: Math.random() * canvas.width, y: Math.random() * canvas.height, size: Math.random() * 20 + 30, c: cs[0 | Math.random() * 5], sy: -(Math.random() * 3 + 2), sx: Math.random() * 2 - 1 })); }
+      else parts = [];
+    };
 
     const drawFrame = () => {
-      if (video.ended || !isExporting) { rec.stop(); return; }
-      setExportProgress((video.currentTime / video.duration) * 100);
-      
-      // Video
+      if (video.currentTime >= dur - 0.1 || video.ended) { if (rec.state === 'recording') { rec.stop(); video.pause(); audio.pause(); } return; }
+      const t = video.currentTime; setExportProgress((t / dur) * 100);
+      const seg = editScript.find(s => t >= s.startTime && t <= s.endTime) ?? editScript.at(-1)!;
+      let rf = userFrame, re = userEffect;
+      if (!frameTiming.isFull && (t < frameTiming.startTime || t > frameTiming.endTime)) rf = seg?.frameStyle || 'none';
+      if (!effectTiming.isFull && (t < effectTiming.startTime || t > effectTiming.endTime)) re = seg?.effect || 'none';
+      let r = seg?.playbackRate ?? 1; if (!r || isNaN(r) || r <= 0) r = 1; r = Math.min(5, Math.max(0.5, r));
+      if (r !== lastRate) { video.playbackRate = r; lastRate = r; }
+      ctx.filter = seg?.cssFilter && seg.cssFilter !== 'none' ? seg.cssFilter : 'none';
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      
-      // Frame drawing on Canvas
-      if (activeFrame === 'cinematic') {
-        ctx.fillStyle = 'black';
-        ctx.fillRect(0, 0, canvas.width, canvas.height * 0.1);
-        ctx.fillRect(0, canvas.height * 0.9, canvas.width, canvas.height * 0.1);
-      } else if (activeFrame === 'neon') {
-        ctx.strokeStyle = '#ec4899'; ctx.lineWidth = 15; ctx.shadowBlur = 20; ctx.shadowColor = '#ec4899';
-        ctx.strokeRect(0, 0, canvas.width, canvas.height); ctx.shadowBlur = 0;
-      } else if (activeFrame === 'aurora') {
-        const g = ctx.createLinearGradient(0, 0, canvas.width, 0);
-        g.addColorStop(0, '#6366f1'); g.addColorStop(1, '#14b8a6');
-        ctx.strokeStyle = g; ctx.lineWidth = 25; ctx.strokeRect(0, 0, canvas.width, canvas.height);
-      } else if (activeFrame === 'gold') {
-        const g = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
-        g.addColorStop(0, '#fde047'); g.addColorStop(0.5, '#fbbf24'); g.addColorStop(1, '#b45309');
-        ctx.strokeStyle = g; ctx.lineWidth = 30; ctx.strokeRect(0, 0, canvas.width, canvas.height);
+      initPfx(re);
+
+      if (re !== 'none' && parts.length > 0) {
+        ctx.filter = 'none';
+        parts.forEach(p => {
+          if (re === 'snow') { ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill(); p.y += p.sy; p.x += p.sx; if (p.y > canvas.height) p.y = -10; if (p.x < 0) p.x = canvas.width; if (p.x > canvas.width) p.x = 0; }
+          else if (re === 'confetti') { ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.r * Math.PI / 180); ctx.fillStyle = p.c; ctx.fillRect(-p.size / 4, -p.size / 2, p.size / 2, p.size); ctx.restore(); p.y += p.sy; p.x += p.sx; p.r += p.rs; if (p.y > canvas.height) p.y = -10; }
+          else if (re === 'balloons') { ctx.fillStyle = p.c; ctx.beginPath(); ctx.ellipse(p.x, p.y, p.size / 2, p.size * 0.6, 0, 0, Math.PI * 2); ctx.fill(); p.y += p.sy; if (p.y < -p.size) p.y = canvas.height + p.size; }
+        });
       }
 
-      // Texts
-      userTexts.forEach(tx => {
-        const t = video.currentTime;
-        if (t < (tx.startTime || 0) || t > (tx.endTime || video.duration)) return;
-        ctx.font = `bold ${canvas.width * 0.08 * (tx.scale || 1)}px sans-serif`;
-        ctx.fillStyle = 'white'; ctx.textAlign = tx.textAlign || 'center';
-        ctx.shadowColor = 'black'; ctx.shadowBlur = 10;
-        ctx.fillText(tx.text, canvas.width/2 + (tx.xOffset || 0), canvas.height/2 + (tx.yOffset || 0));
-        ctx.shadowBlur = 0;
-      });
+      ctx.filter = 'none';
+      if (rf === 'cinematic') { ctx.fillStyle = 'black'; ctx.fillRect(0, 0, canvas.width, canvas.height * 0.08); ctx.fillRect(0, canvas.height * 0.92, canvas.width, canvas.height * 0.08); }
+      else if (rf === 'neon') { ctx.strokeStyle = '#ec4899'; ctx.lineWidth = 8; ctx.shadowColor = 'rgba(236,72,153,0.8)'; ctx.shadowBlur = 30; ctx.strokeRect(4, 4, canvas.width - 8, canvas.height - 8); ctx.shadowBlur = 0; }
+      else if (rf === 'vintage') { ctx.strokeStyle = '#8b5a2b'; ctx.lineWidth = 40; ctx.strokeRect(20, 20, canvas.width - 40, canvas.height - 40); }
+      else if (rf === 'glitch') { ctx.fillStyle = 'rgba(239,68,68,0.5)'; ctx.fillRect(0, 0, 8, canvas.height); ctx.fillStyle = 'rgba(59,130,246,0.5)'; ctx.fillRect(canvas.width - 8, 0, 8, canvas.height); }
+      else if (rf === 'minimal') { ctx.strokeStyle = '#f4f4f5'; ctx.lineWidth = 16; ctx.beginPath(); ctx.roundRect(8, 8, canvas.width - 16, canvas.height - 16, 24); ctx.stroke(); }
+      else if (rf === 'bold') { ctx.strokeStyle = '#facc15'; ctx.lineWidth = 24; ctx.strokeRect(12, 12, canvas.width - 24, canvas.height - 24); }
+      if (frameImg && rf.startsWith('blob:')) ctx.drawImage(frameImg, 0, 0, canvas.width, canvas.height);
 
+      ctx.filter = 'none'; ctx.textBaseline = 'middle';
+
+      // Ekrandan (HTML Container) videoya taşınırken oranlama hesabı
+      const container = containerRef.current;
+      const scaleX = container ? canvas.width / container.clientWidth : 1;
+      const scaleY = container ? canvas.height / container.clientHeight : 1;
+
+      userTexts.forEach(tx => {
+        if (tx.startTime !== undefined && tx.endTime !== undefined && (t < tx.startTime || t > tx.endTime)) return;
+        const scaleVal = tx.scale || 1;
+        const fs = Math.max(1, Math.round(canvas.width * 0.1 * scaleVal));
+        ctx.font = `bold ${fs}px "${tx.fontFamily}", sans-serif`;
+        ctx.fillStyle = 'white';
+        ctx.strokeStyle = 'black';
+        ctx.lineWidth = fs * 0.05;
+        ctx.textAlign = tx.textAlign || 'center';
+
+        // CSS Case Dönüşümlerini Canvas'a Yediriyoruz
+        const fontFam = tx.fontFamily || 'inter';
+        let drawnText = tx.text;
+        const upFonts = ['anton', 'bebas', 'cinzel', 'oswald'];
+        const capFonts = ['caveat', 'playfair', 'pacifico'];
+
+        if (upFonts.includes(fontFam) || !FONTS.includes(fontFam) || fontFam === 'inter') {
+          drawnText = drawnText.toUpperCase();
+        } else if (capFonts.includes(fontFam)) {
+          drawnText = drawnText.replace(/\b\w/g, c => c.toUpperCase());
+        }
+
+        // CSS Harf Aralığını (Tracking) Canvas'a Yediriyoruz
+        if (fontFam === 'anton') ctx.letterSpacing = '0.025em';
+        else if (fontFam === 'bebas') ctx.letterSpacing = '0.05em';
+        else if (fontFam === 'cinzel') ctx.letterSpacing = '0.1em';
+        else if (fontFam === 'oswald' || fontFam === 'montserrat') ctx.letterSpacing = '-0.025em';
+        else if (['caveat', 'playfair', 'pacifico', 'quicksand', 'lobster', 'abril'].includes(fontFam)) ctx.letterSpacing = '0px';
+        else ctx.letterSpacing = '-0.05em';
+
+        // \r\n → \n normalize et, ardından satır sar
+        const normalizedText = drawnText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        // Max Width değerine scale'i dahil ediyoruz ki HTML'deki CSS transform ile birebir eşleşsin
+        const maxWidth = canvas.width * 0.86 * scaleVal;
+        const lines: string[] = [];
+
+        normalizedText.split('\n').forEach(para => {
+          if (para.trim() === '') {
+            lines.push('');
+            return;
+          }
+
+          // Eğer paragraf zaten maxWidth'e sığıyorsa, doğrudan ekle
+          if (ctx.measureText(para).width <= maxWidth) {
+            lines.push(para);
+            return;
+          }
+
+          // HTML'deki word-break: break-word simülasyonu
+          const words = para.split(' ');
+          let currentLine = '';
+
+          for (let i = 0; i < words.length; i++) {
+            const word = words[i];
+
+            // Kelimenin tek başına maxWidth'i aşıp aşmadığına bak
+            if (ctx.measureText(word).width > maxWidth) {
+              if (currentLine.trim()) {
+                lines.push(currentLine);
+                currentLine = '';
+              }
+              // Kelimeyi karakter karakter kır
+              let tempStr = '';
+              for (const char of word) {
+                if (ctx.measureText(tempStr + char).width <= maxWidth) {
+                  tempStr += char;
+                } else {
+                  if (tempStr) lines.push(tempStr);
+                  tempStr = char;
+                }
+              }
+              currentLine = tempStr;
+            } else {
+              const testLine = currentLine + (currentLine ? ' ' : '') + word;
+              if (ctx.measureText(testLine).width <= maxWidth) {
+                currentLine = testLine;
+              } else {
+                if (currentLine.trim()) lines.push(currentLine);
+                currentLine = word;
+              }
+            }
+          }
+
+          if (currentLine.trim()) lines.push(currentLine);
+        });
+
+        // Pozisyonların Canvas ölçülerine tam çevrilmesi
+        const canvasXOffset = (tx.xOffset || 0) * scaleX;
+        const canvasYOffset = (tx.yOffset || 0) * scaleY;
+
+        let x = canvas.width / 2 + canvasXOffset;
+        if (tx.textAlign === 'left') x = canvas.width * 0.07 + canvasXOffset;
+        if (tx.textAlign === 'right') x = canvas.width * 0.93 + canvasXOffset;
+
+        const lh = fs * 1.2;
+        const sy = (canvas.height / 2 + canvasYOffset) - (lines.length - 1) * lh / 2;
+
+        lines.forEach((l, i) => {
+          const ly = sy + i * lh;
+          ctx.strokeText(l, x, ly);
+          ctx.fillText(l, x, ly);
+        });
+
+        ctx.letterSpacing = '0px'; // Diğer yazılar için sıfırla
+      });
       requestAnimationFrame(drawFrame);
     };
-    drawFrame();
+    requestAnimationFrame(drawFrame);
   };
 
+  /* ── render ─────────────────────────────────────────────────────────── */
   return (
-    <div className="w-full h-full bg-zinc-950 flex flex-col overflow-hidden relative">
-      <audio ref={audioRef} src={customAudioUrl || VIBE_AUDIO[vibe] || VIBE_AUDIO['Energetic']} loop />
+    <div
+      className="w-full h-full flex flex-col overflow-hidden"
+      style={{ background: 'linear-gradient(180deg, #0a0a0e 0%, #0d0d12 100%)' }}
+    >
+      <audio
+        ref={audioRef}
+        src={customAudioUrl || VIBE_AUDIO[vibe] || VIBE_AUDIO['Energetic']}
+        loop
+        crossOrigin={customAudioUrl ? undefined : 'anonymous'}
+      />
 
-      <div className="flex-1 min-h-0 overflow-hidden relative p-4 flex items-center justify-center">
+      {/* ── ZONE 1: TOP BAR — brand only ────────────────────────────────── */}
+      <div className="shrink-0 flex items-center justify-center px-4 pt-4 pb-2">
+        <div className="flex items-center gap-1.5">
+          <div className="w-1.5 h-1.5 rounded-full bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.8)]" />
+          <span
+            className="text-[10px] font-black uppercase select-none"
+            style={{ color: 'rgba(255,255,255,0.3)', letterSpacing: '0.35em' }}
+          >
+            SpinEdit
+          </span>
+        </div>
+      </div>
+
+      {/* ── ZONE 2: VIDEO ────────────────────────────────────────────────── */}
+      <div className="flex-1 min-h-0 px-3 py-1">
         <div
           ref={containerRef}
-          className={`relative w-full aspect-[9/16] max-h-full transition-all duration-500 ease-in-out ${getFrameCls(activeFrame)}`}
+          className={`relative w-full h-full overflow-hidden rounded-2xl transition-all duration-500 ${getFrameCls(activeFrame.startsWith('blob:') ? 'none' : activeFrame)
+            }`}
+          style={{
+            boxShadow: '0 0 0 1px rgba(255,255,255,0.05), 0 24px 60px rgba(0,0,0,0.6)',
+            containerType: 'inline-size'
+          }}
           onClick={() => { setSelectedId(null); setOpenPanel(null); }}
         >
           <EffectsOverlay effect={activeEffect} />
-          
+
+          {activeFrame.startsWith('blob:') && (
+            <img src={activeFrame} alt=""
+              className="absolute inset-0 w-full h-full object-fill pointer-events-none z-20" />
+          )}
+
           <video
-            ref={videoRef} src={videoUrl}
+            key={videoUrl}
+            ref={videoRef}
+            src={videoUrl}
             className="w-full h-full object-cover"
+            style={{ filter: currentSeg?.cssFilter && currentSeg.cssFilter !== 'none' ? currentSeg.cssFilter : 'none' }}
             onEnded={handleEnded}
-            playsInline muted
+            onError={e => {
+              const err = (e.target as HTMLVideoElement).error;
+              if (err?.code === 4 && retryCount < 2) { setTimeout(() => { setRetryCount(c => c + 1); setVideoUrl(URL.createObjectURL(videoBlob)); }, 800); }
+              else if (err?.code === 4) { alert('Bu video formatı desteklenmiyor.'); }
+            }}
+            playsInline webkit-playsinline="true" controls={false} preload="auto" muted
           />
 
+          {/* Bottom gradient vignette for legibility */}
+          <div
+            className="absolute bottom-0 left-0 right-0 h-28 pointer-events-none z-10"
+            style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.45) 0%, transparent 100%)' }}
+          />
+
+          {/* Text overlays */}
           <AnimatePresence>
             {visibleTexts.map(t => (
               <motion.div
                 key={t.id}
-                drag dragMomentum={false}
-                onDragEnd={(_, info) => updateSel({ xOffset: (t.xOffset || 0) + info.offset.x, yOffset: (t.yOffset || 0) + info.offset.y })}
-                className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 cursor-move z-30
-                  ${selectedId === t.id ? 'ring-2 ring-indigo-500 p-2' : ''}`}
-                onClick={(e) => { e.stopPropagation(); setSelectedId(t.id); setOpenPanel('text'); }}
+                initial={{ opacity: 0, scale: 0.85 }}
+                animate={{ opacity: 1, scale: (selectedId === t.id ? 1.05 : 1) * (t.scale || 1), y: t.yOffset ?? 0, x: t.xOffset ?? 0 }}
+                exit={{ opacity: 0, scale: 0.85 }}
+                transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+                drag dragMomentum={false} dragConstraints={containerRef} dragElastic={0}
+                onDragEnd={(_, info) => setUserTexts(ts => ts.map(x => x.id === t.id ? { ...x, yOffset: (x.yOffset || 0) + info.offset.y, xOffset: (x.xOffset || 0) + info.offset.x } : x))}
+                onClick={e => { e.stopPropagation(); setSelectedId(t.id); setOpenPanel('text'); }}
+                className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-xl z-30 cursor-grab active:cursor-grabbing
+                  ${selectedId === t.id ? 'ring-4 ring-amber-400/50 bg-white/10 backdrop-blur-sm' : 'hover:bg-white/5'}`}
+                style={{ width: '86%' }}
               >
-                <h2 className={`${getFontCls(t.fontFamily)} text-white text-3xl drop-shadow-2xl text-center`}
-                    style={{ transform: `scale(${t.scale || 1})`, pointerEvents: 'none' }}>
+                <h2
+                  className={`text-white text-4xl ${getFontCls(t.fontFamily)}`}
+                  style={{
+                    fontSize: '10cqw',
+                    lineHeight: '1.2',
+                    WebkitTextStroke: '1.5px rgba(0,0,0,0.7)',
+                    textAlign: t.textAlign || 'center',
+                    textShadow: '0 4px 16px rgba(0,0,0,0.9)',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                    overflowWrap: 'break-word',
+                    width: '100%',
+                    display: 'block',
+                  }}
+                >
                   {t.text}
                 </h2>
               </motion.div>
@@ -355,101 +559,488 @@ export function VideoPreview({
         </div>
       </div>
 
-      {/* Progress Bar */}
-      <div className="px-6 py-2 bg-zinc-950">
-         <div className="h-1 w-full bg-zinc-800 rounded-full overflow-hidden">
-            <div className="h-full bg-indigo-500" style={{ width: `${videoProgress}%` }} />
-         </div>
-      </div>
-
-      {/* Toolbar */}
-      <div className="p-4 bg-zinc-900 border-t border-white/5 flex items-center justify-around">
-        <ToolBtn icon={<Type />} label="Metin" active={openPanel === 'text'} onClick={() => togglePanel('text')} />
-        <ToolBtn icon={<Frame />} label="Çerçeve" active={openPanel === 'frame'} onClick={() => togglePanel('frame')} />
-        <ToolBtn icon={<Sparkles />} label="Efekt" active={openPanel === 'effect'} onClick={() => togglePanel('effect')} />
-        
-        <button onClick={togglePlay} className="w-14 h-14 bg-white rounded-full flex items-center justify-center text-black shadow-xl">
-          {isPlaying ? <Pause fill="black" /> : <Play fill="black" />}
-        </button>
-
-        <button onClick={exportVideo} className="p-4 bg-indigo-600 rounded-2xl text-white">
-          {isExporting ? <Loader2 className="animate-spin" /> : <Download />}
-        </button>
-      </div>
-
-      {/* Panels */}
-      <AnimatePresence>
-        {openPanel === 'frame' && (
-          <Sheet title="Çerçeve Seç" onClose={() => setOpenPanel(null)}>
-            <div className="flex gap-3 overflow-x-auto p-2 scrollbar-hide">
-              {FRAME_OPTIONS.map(f => (
-                <button
-                  key={f}
-                  onClick={() => setUserFrame(f)}
-                  className={`px-4 py-3 rounded-xl capitalize whitespace-nowrap border-2 transition-all
-                    ${userFrame === f ? 'border-indigo-500 bg-indigo-500/10 text-white' : 'border-zinc-800 text-zinc-400'}`}
-                >
-                  {f}
-                </button>
-              ))}
-            </div>
-            <TimingRow 
-              isFull={frameTiming.isFull} 
-              onToggle={(v) => setFrameTiming(p => ({...p, isFull: v}))}
-              startTime={frameTiming.startTime}
-              endTime={frameTiming.endTime}
-              onStart={(v) => setFrameTiming(p => ({...p, startTime: v}))}
-              onEnd={(v) => setFrameTiming(p => ({...p, endTime: v}))}
-              videoDuration={videoDuration}
+      {/* ── ZONE 3: SEEK BAR ─────────────────────────────────────────────── */}
+      <div className="shrink-0 flex items-center gap-3 px-5 pt-2.5 pb-1.5">
+        <span className="text-[10px] text-zinc-600 font-mono w-8 text-right shrink-0 tabular-nums">
+          {fmt(videoRef.current?.currentTime || 0)}
+        </span>
+        <div className="relative flex-1 h-6 flex items-center">
+          {/* Track */}
+          <div
+            className="absolute left-0 right-0 h-[3px] rounded-full pointer-events-none"
+            style={{ background: 'rgba(255,255,255,0.08)' }}
+          >
+            <div
+              className="h-full rounded-full transition-none"
+              style={{
+                width: `${videoProgress}%`,
+                background: 'linear-gradient(90deg, #f59e0b, #ea580c)',
+                boxShadow: '0 0 8px rgba(245,158,11,0.5)',
+              }}
             />
+          </div>
+          {/* Thumb dot */}
+          <div
+            className="absolute h-3 w-3 rounded-full pointer-events-none -translate-x-1/2 shadow-lg"
+            style={{
+              left: `${videoProgress}%`,
+              background: '#f59e0b',
+              boxShadow: '0 0 0 3px rgba(245,158,11,0.2), 0 2px 8px rgba(0,0,0,0.6)',
+            }}
+          />
+          {/* Native input */}
+          <input
+            type="range" min="0" max="100" step="0.1" value={videoProgress}
+            onChange={e => {
+              const v = +e.target.value;
+              setVideoProgress(v);
+              if (videoRef.current?.duration) videoRef.current.currentTime = (v / 100) * videoRef.current.duration;
+            }}
+            className="absolute inset-0 w-full opacity-0 cursor-pointer"
+          />
+        </div>
+        <span className="text-[10px] text-zinc-600 font-mono w-8 shrink-0 tabular-nums">
+          {fmt(videoDuration)}
+        </span>
+      </div>
+
+      {/* ── ZONE 4: TOOLBAR ──────────────────────────────────────────────── */}
+      <div className="shrink-0 px-4 pt-1 pb-6">
+        <div
+          className="flex items-center justify-between rounded-2xl px-3 py-2.5"
+          style={{
+            background: 'linear-gradient(180deg, #151519 0%, #111115 100%)',
+            border: '1px solid rgba(255,255,255,0.07)',
+            boxShadow: '0 -1px 0 rgba(255,255,255,0.03), 0 8px 32px rgba(0,0,0,0.5)',
+          }}
+        >
+          {/* Left: tools */}
+          <div className="flex gap-0.5">
+            <ToolBtn icon={<Type size={17} />} label="Metin" active={openPanel === 'text'} onClick={() => togglePanel('text')} />
+            <ToolBtn icon={<Frame size={17} />} label="Çerçeve" active={openPanel === 'frame'} onClick={() => togglePanel('frame')} />
+            <ToolBtn icon={<Sparkles size={17} />} label="Efekt" active={openPanel === 'effect'} onClick={() => togglePanel('effect')} />
+          </div>
+
+          {/* Center: play + action buttons */}
+          <div className="flex items-center gap-2">
+            {/* Sıfırla button */}
+            <button
+              onClick={onReset}
+              title="Sıfırla"
+              className="flex flex-col items-center justify-center gap-0.5 px-3 py-2 rounded-xl transition-all duration-200 text-zinc-500 hover:text-zinc-200"
+              style={{ background: 'transparent' }}
+            >
+              <RotateCcw size={17} />
+              <span className="text-[8px] font-bold uppercase tracking-widest leading-none">Sıfırla</span>
+            </button>
+
+            {/* Play button */}
+            <button
+              onClick={togglePlay}
+              className="w-14 h-14 rounded-full flex items-center justify-center hover:scale-105 active:scale-95 transition-all duration-200 shrink-0"
+              style={{
+                background: isPlaying
+                  ? 'linear-gradient(135deg, #e5e5e5 0%, #ffffff 100%)'
+                  : 'linear-gradient(135deg, #ffffff 0%, #e8e8e8 100%)',
+                boxShadow: '0 0 0 1px rgba(255,255,255,0.15), 0 8px 28px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.4)',
+                color: '#0a0a0e',
+              }}
+            >
+              {isPlaying
+                ? <Pause size={24} fill="currentColor" />
+                : <Play size={24} fill="currentColor" className="ml-0.5" />
+              }
+            </button>
+
+            {/* Kaydet button */}
+            <button
+              onClick={exportVideo}
+              disabled={isExporting}
+              className="flex flex-col items-center justify-center gap-0.5 px-3 py-2 rounded-xl transition-all duration-200 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
+              style={{
+                background: isExporting ? 'rgba(245,158,11,0.1)' : 'rgba(245,158,11,0.15)',
+                color: '#f59e0b',
+              }}
+            >
+              {isExporting
+                ? <Loader2 size={17} className="animate-spin" />
+                : <Download size={17} />
+              }
+              <span className="text-[8px] font-bold uppercase tracking-widest leading-none">
+                {isExporting ? `${Math.round(exportProgress)}%` : 'Kaydet'}
+              </span>
+            </button>
+          </div>
+
+          {/* Right: empty for balance */}
+          <div className="w-20" />
+        </div>
+      </div>
+
+      {/* ── PANELS ───────────────────────────────────────────────────────── */}
+      <AnimatePresence>
+        {openPanel === 'text' && (
+          <Sheet title={selectedId ? 'Metin Düzenle' : 'Metin Ekle'} onClose={() => setOpenPanel(null)}>
+            {!selectedId ? (
+              <button
+                onClick={addText}
+                className="w-full py-3 rounded-xl text-sm font-bold tracking-wide transition-all hover:opacity-90 active:scale-[0.98]"
+                style={{
+                  background: 'linear-gradient(135deg, #f59e0b 0%, #ea580c 100%)',
+                  color: '#000',
+                  boxShadow: '0 4px 16px rgba(245,158,11,0.25)',
+                }}
+              >
+                + Yeni Metin Ekle
+              </button>
+            ) : sel ? (
+              <div className="flex flex-col gap-3">
+                {/* Input row */}
+                <div className="flex gap-2">
+                  <textarea
+                    value={sel.text}
+                    onChange={e => updateSel({ text: e.target.value })}
+
+                    autoFocus rows={5}
+                    className="flex-1 text-white text-sm px-3 py-2.5 rounded-xl resize-none focus:outline-none transition-all"
+                    style={{
+                      background: 'rgba(255,255,255,0.05)',
+                      border: '1px solid rgba(255,255,255,0.1)',
+                    }}
+                    onFocus={e => {
+                      e.target.style.borderColor = 'rgba(245,158,11,0.5)';
+                      e.target.style.boxShadow = '0 0 0 3px rgba(245,158,11,0.08)';
+                    }}
+                    onBlur={e => {
+                      e.target.style.borderColor = 'rgba(255,255,255,0.1)';
+                      e.target.style.boxShadow = 'none';
+                    }}
+                    placeholder="Metin girin..."
+                  />
+                  <div className="flex flex-col gap-2">
+                    <button
+                      onClick={() => setSelectedId(null)}
+                      className="p-2.5 rounded-xl text-black font-bold transition-all hover:opacity-90"
+                      style={{ background: 'linear-gradient(135deg, #f59e0b, #ea580c)' }}
+                    >
+                      <Check size={14} />
+                    </button>
+                    <button
+                      onClick={() => { setUserTexts(t => t.filter(x => x.id !== selectedId)); setSelectedId(null); }}
+                      className="p-2.5 rounded-xl text-red-400 transition-all hover:text-red-300"
+                      style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.15)' }}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Scale + align */}
+                <div
+                  className="flex items-center gap-3 rounded-xl p-2.5"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}
+                >
+                  <div className="flex-1 flex items-center gap-2">
+                    <span className="text-[10px] text-zinc-600 font-black">A</span>
+                    <input
+                      type="range" min="0.5" max="3" step="0.1" value={sel.scale || 1}
+                      onChange={e => updateSel({ scale: +e.target.value })}
+                      className="flex-1 cursor-pointer"
+                      style={{ accentColor: '#f59e0b', height: '3px' }}
+                    />
+                    <span className="text-sm text-zinc-400 font-black leading-none">A</span>
+                  </div>
+                  <div className="w-px h-4 bg-white/8" />
+                  <div className="flex gap-0.5">
+                    {(['left', 'center', 'right'] as const).map(a => (
+                      <button key={a} onClick={() => updateSel({ textAlign: a })}
+                        className="p-1.5 rounded-lg transition-all"
+                        style={{
+                          background: (sel.textAlign || 'center') === a ? 'rgba(245,158,11,0.2)' : 'transparent',
+                          color: (sel.textAlign || 'center') === a ? '#f59e0b' : 'rgba(255,255,255,0.25)',
+                        }}
+                      >
+                        {a === 'left' ? <AlignLeft size={13} /> : a === 'center' ? <AlignCenter size={13} /> : <AlignRight size={13} />}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Timing */}
+                <div className="flex items-center gap-3">
+                  <span className="text-[10px] text-zinc-600 uppercase tracking-widest font-bold shrink-0">Süre</span>
+                  <div
+                    className="flex-1 flex items-center gap-2 px-3 py-1.5 rounded-lg"
+                    style={{ background: 'rgba(255,255,255,0.04)' }}
+                  >
+                    <input type="number" step="0.1" min="0" value={Math.round((sel.startTime || 0) * 10) / 10}
+                      onChange={e => updateSel({ startTime: +e.target.value || 0 })}
+                      className="w-10 bg-transparent text-[12px] text-white text-center focus:outline-none font-mono tabular-nums" />
+                    <span className="text-zinc-700 text-xs">→</span>
+                    <input type="number" step="0.1" min="0" value={Math.round((sel.endTime || videoDuration || 10) * 10) / 10}
+                      onChange={e => updateSel({ endTime: +e.target.value || videoDuration })}
+                      className="w-10 bg-transparent text-[12px] text-white text-center focus:outline-none font-mono tabular-nums" />
+                    <span className="text-[10px] text-zinc-700 ml-1">sn</span>
+                  </div>
+                </div>
+
+                {/* Fonts */}
+                <div className="flex gap-1.5 overflow-x-auto scrollbar-hide pb-0.5">
+                  {FONTS.map(f => (
+                    <button key={f} onClick={() => updateSel({ fontFamily: f })}
+                      className="px-3 py-1.5 rounded-lg text-xs whitespace-nowrap font-semibold shrink-0 transition-all"
+                      style={{
+                        background: sel.fontFamily === f ? 'rgba(245,158,11,0.2)' : 'rgba(255,255,255,0.05)',
+                        border: `1px solid ${sel.fontFamily === f ? 'rgba(245,158,11,0.4)' : 'rgba(255,255,255,0.06)'}`,
+                        color: sel.fontFamily === f ? '#f59e0b' : 'rgba(255,255,255,0.4)',
+                      }}
+                    >
+                      {f[0].toUpperCase() + f.slice(1)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <p className="text-zinc-600 text-sm text-center py-3">Videodaki bir metne dokun</p>
+            )}
           </Sheet>
         )}
       </AnimatePresence>
 
-      {/* Text Panel & Effect Panel similarly... */}
+      <AnimatePresence>
+        {openPanel === 'frame' && (
+          <Sheet title="Çerçeve" onClose={() => setOpenPanel(null)}>
+            <div className="flex gap-1.5 overflow-x-auto scrollbar-hide pb-0.5">
+              {FRAME_OPTIONS.map(f => (
+                <button key={f} onClick={() => setUserFrame(f)}
+                  className="px-3 py-1.5 rounded-lg text-xs capitalize whitespace-nowrap font-semibold shrink-0 transition-all"
+                  style={{
+                    background: userFrame === f ? 'rgba(245,158,11,0.2)' : 'rgba(255,255,255,0.05)',
+                    border: `1px solid ${userFrame === f ? 'rgba(245,158,11,0.4)' : 'rgba(255,255,255,0.06)'}`,
+                    color: userFrame === f ? '#f59e0b' : 'rgba(255,255,255,0.4)',
+                  }}
+                >
+                  {f === 'none' ? 'Yok' : f}
+                </button>
+              ))}
+              {customFrames.map(url => (
+                <button key={url} onClick={() => setUserFrame(url)}
+                  className="w-14 h-9 rounded-lg overflow-hidden shrink-0 border-2 transition-all"
+                  style={{ borderColor: userFrame === url ? '#f59e0b' : 'transparent' }}>
+                  <img src={url} className="w-full h-full object-cover" />
+                </button>
+              ))}
+              <label
+                className="flex items-center px-3 py-1.5 rounded-lg text-zinc-500 text-xs cursor-pointer shrink-0 hover:text-zinc-300 transition-colors whitespace-nowrap font-semibold"
+                style={{ border: '1px dashed rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.03)' }}
+              >
+                <input type="file" accept="image/png,image/webp" className="hidden"
+                  onChange={e => { const f = e.target.files?.[0]; if (f) { const u = URL.createObjectURL(f); setCustomFrames(p => [...p, u]); setUserFrame(u); } }} />
+                + PNG
+              </label>
+            </div>
+            <TimingRow isFull={frameTiming.isFull} startTime={frameTiming.startTime} endTime={frameTiming.endTime}
+              videoDuration={videoDuration}
+              onToggle={v => setFrameTiming(p => ({ ...p, isFull: v }))}
+              onStart={v => setFrameTiming(p => ({ ...p, startTime: v }))}
+              onEnd={v => setFrameTiming(p => ({ ...p, endTime: v }))} />
+          </Sheet>
+        )}
+      </AnimatePresence>
 
+      <AnimatePresence>
+        {openPanel === 'effect' && (
+          <Sheet title="Efekt" onClose={() => setOpenPanel(null)}>
+            <div className="flex gap-1.5 overflow-x-auto scrollbar-hide pb-0.5">
+              {EFFECT_OPTIONS.map(e => (
+                <button key={e.key} onClick={() => setUserEffect(e.key)}
+                  className="px-3 py-1.5 rounded-lg text-xs whitespace-nowrap font-semibold shrink-0 transition-all"
+                  style={{
+                    background: userEffect === e.key ? 'rgba(245,158,11,0.2)' : 'rgba(255,255,255,0.05)',
+                    border: `1px solid ${userEffect === e.key ? 'rgba(245,158,11,0.4)' : 'rgba(255,255,255,0.06)'}`,
+                    color: userEffect === e.key ? '#f59e0b' : 'rgba(255,255,255,0.4)',
+                  }}
+                >
+                  {e.label}
+                </button>
+              ))}
+            </div>
+            <TimingRow isFull={effectTiming.isFull} startTime={effectTiming.startTime} endTime={effectTiming.endTime}
+              videoDuration={videoDuration}
+              onToggle={v => setEffectTiming(p => ({ ...p, isFull: v }))}
+              onStart={v => setEffectTiming(p => ({ ...p, startTime: v }))}
+              onEnd={v => setEffectTiming(p => ({ ...p, endTime: v }))} />
+          </Sheet>
+        )}
+      </AnimatePresence>
+
+      {/* Export overlay */}
+      <AnimatePresence>
+        {isExporting && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="absolute inset-0 z-50 flex items-center justify-center"
+            style={{ background: 'rgba(9,9,13,0.88)', backdropFilter: 'blur(12px)' }}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
+              transition={{ type: 'spring', damping: 28, stiffness: 360 }}
+              className="flex flex-col items-center gap-5 mx-6 w-full max-w-xs p-8 rounded-3xl"
+              style={{
+                background: 'linear-gradient(180deg, #151519 0%, #111115 100%)',
+                border: '1px solid rgba(255,255,255,0.07)',
+                boxShadow: '0 40px 80px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.04)',
+              }}
+            >
+              {/* Spinner ring */}
+              <div className="relative w-14 h-14">
+                <div
+                  className="absolute inset-0 rounded-full"
+                  style={{ border: '2px solid rgba(245,158,11,0.15)' }}
+                />
+                <div
+                  className="absolute inset-0 rounded-full animate-spin"
+                  style={{
+                    border: '2px solid transparent',
+                    borderTopColor: '#f59e0b',
+                    borderRightColor: 'rgba(245,158,11,0.3)',
+                  }}
+                />
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <span className="text-xs font-black text-amber-400 tabular-nums">
+                    {Math.round(exportProgress)}
+                  </span>
+                </div>
+              </div>
+
+              <div className="text-center">
+                <p className="text-white font-bold text-sm tracking-wide">Video kaydediliyor</p>
+                <p className="text-zinc-600 text-xs mt-1">%{Math.round(exportProgress)} tamamlandı</p>
+              </div>
+
+              <div className="w-full h-1 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.07)' }}>
+                <motion.div
+                  className="h-full rounded-full"
+                  animate={{ width: `${exportProgress}%` }}
+                  transition={{ duration: 0.4, ease: 'easeOut' }}
+                  style={{ background: 'linear-gradient(90deg, #f59e0b, #ea580c)' }}
+                />
+              </div>
+
+              <p className="text-amber-500/50 text-[10px] text-center font-medium">
+                ⚠ Sekmeyi değiştirmeyin
+              </p>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
 
-/* Helpers */
-function ToolBtn({ icon, label, active, onClick }: any) {
+/* ── Sub-components ─────────────────────────────────────────────────────── */
+
+function ToolBtn({
+  icon, label, active = false, onClick
+}: { icon: React.ReactNode; label: string; active?: boolean; onClick: () => void }) {
   return (
-    <button onClick={onClick} className={`flex flex-col items-center gap-1 ${active ? 'text-indigo-400' : 'text-zinc-500'}`}>
+    <button
+      onClick={onClick}
+      className="flex flex-col items-center justify-center gap-0.5 px-3.5 py-2 rounded-xl transition-all duration-200"
+      style={{
+        background: active ? 'rgba(245,158,11,0.12)' : 'transparent',
+        color: active ? '#f59e0b' : 'rgba(255,255,255,0.28)',
+      }}
+    >
       {icon}
-      <span className="text-[10px] font-bold uppercase">{label}</span>
+      <span className="text-[8px] font-bold uppercase tracking-widest leading-none">
+        {label}
+      </span>
     </button>
   );
 }
 
-function Sheet({ title, onClose, children }: any) {
+function Sheet({
+  title, onClose, children
+}: { title: string; onClose: () => void; children: React.ReactNode }) {
   return (
     <motion.div
-      initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
-      className="absolute bottom-0 left-0 right-0 bg-zinc-900 rounded-t-3xl border-t border-white/10 p-6 z-50 shadow-2xl"
+      initial={{ y: 40, opacity: 0 }}
+      animate={{ y: 0, opacity: 1 }}
+      exit={{ y: 40, opacity: 0 }}
+      transition={{ type: 'spring', damping: 32, stiffness: 420 }}
+      className="absolute bottom-[92px] left-3 right-3 rounded-2xl z-40 overflow-hidden"
+      style={{
+        background: 'linear-gradient(180deg, #161619 0%, #121215 100%)',
+        border: '1px solid rgba(255,255,255,0.07)',
+        boxShadow: '0 -4px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.03)',
+      }}
     >
-      <div className="flex justify-between items-center mb-4">
-        <h3 className="text-white font-bold">{title}</h3>
-        <button onClick={onClose} className="p-2 bg-zinc-800 rounded-full"><X size={16} /></button>
+      {/* Header */}
+      <div
+        className="flex items-center justify-between px-4 py-3"
+        style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
+      >
+        <span className="text-xs font-black uppercase tracking-[0.15em] text-zinc-300">
+          {title}
+        </span>
+        <button
+          onClick={onClose}
+          className="w-6 h-6 flex items-center justify-center rounded-full transition-all"
+          style={{ background: 'rgba(255,255,255,0.07)', color: 'rgba(255,255,255,0.4)' }}
+        >
+          <X size={12} />
+        </button>
       </div>
-      {children}
+
+      <div className="px-4 py-4 flex flex-col gap-3">
+        {children}
+      </div>
     </motion.div>
   );
 }
 
-function TimingRow({ isFull, onToggle, startTime, endTime, onStart, onEnd, videoDuration }: any) {
-    return (
-        <div className="mt-4 pt-4 border-t border-white/5 flex items-center gap-4">
-            <button onClick={() => onToggle(!isFull)} className={`px-3 py-1 rounded-lg text-xs ${isFull ? 'bg-indigo-500 text-white' : 'bg-zinc-800 text-zinc-500'}`}>
-                Tüm Video
-            </button>
-            {!isFull && (
-                <div className="flex gap-2 items-center text-white text-sm">
-                    <input type="number" className="w-12 bg-zinc-800 rounded p-1" value={startTime} onChange={e => onStart(+e.target.value)} />
-                    <span>-</span>
-                    <input type="number" className="w-12 bg-zinc-800 rounded p-1" value={endTime || videoDuration} onChange={e => onEnd(+e.target.value)} />
-                </div>
-            )}
+function TimingRow({
+  isFull, startTime, endTime, videoDuration, onToggle, onStart, onEnd
+}: {
+  isFull: boolean; startTime: number; endTime: number; videoDuration: number;
+  onToggle: (v: boolean) => void; onStart: (v: number) => void; onEnd: (v: number) => void;
+}) {
+  return (
+    <div
+      className="flex items-center gap-3 pt-3"
+      style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}
+    >
+      <button
+        onClick={() => onToggle(!isFull)}
+        className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all shrink-0"
+        style={{
+          background: isFull ? 'rgba(245,158,11,0.1)' : 'rgba(255,255,255,0.05)',
+          border: `1px solid ${isFull ? 'rgba(245,158,11,0.3)' : 'rgba(255,255,255,0.07)'}`,
+          color: isFull ? '#f59e0b' : 'rgba(255,255,255,0.35)',
+        }}
+      >
+        <span
+          className="w-1.5 h-1.5 rounded-full"
+          style={{ background: isFull ? '#f59e0b' : 'rgba(255,255,255,0.2)', boxShadow: isFull ? '0 0 6px rgba(245,158,11,0.6)' : 'none' }}
+        />
+        Tüm video
+      </button>
+      {!isFull && (
+        <div
+          className="flex-1 flex items-center gap-2 px-3 py-1.5 rounded-lg"
+          style={{ background: 'rgba(255,255,255,0.04)' }}
+        >
+          <input type="number" step="0.1" min="0" value={Math.round(startTime * 10) / 10}
+            onChange={e => onStart(+e.target.value || 0)}
+            className="w-10 bg-transparent text-[12px] text-white text-center focus:outline-none font-mono tabular-nums" />
+          <span className="text-zinc-700 text-xs">→</span>
+          <input type="number" step="0.1" min="0" value={Math.round((endTime || videoDuration) * 10) / 10}
+            onChange={e => onEnd(+e.target.value || videoDuration)}
+            className="w-10 bg-transparent text-[12px] text-white text-center focus:outline-none font-mono tabular-nums" />
+          <span className="text-[10px] text-zinc-700 ml-auto">sn</span>
         </div>
-    )
+      )}
+    </div>
+  );
 }
