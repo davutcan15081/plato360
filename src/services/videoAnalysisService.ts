@@ -534,16 +534,90 @@ Kurallar:
     
     return `contrast(${contrast.toFixed(1)}) saturate(${saturation.toFixed(1)})${extraEffects}${randomExtra}`;
   }
+  /**
+   * Select frame style based on vibe and segment with transitions
+   */
   private selectFrameStyle(vibe: string, segmentIndex: number): string {
     const styles = {
-      energetic: ['cinematic', 'neon', 'bold', 'glitch'],
-      cinematic: ['cinematic', 'vintage', 'minimal'],
-      minimalist: ['minimal', 'none', 'tv'],
-      cyberpunk: ['neon', 'glitch', 'bold']
+      energetic: ['cinematic', 'neon', 'bold', 'glitch', 'tv', 'comic'],
+      cinematic: ['cinematic', 'vintage', 'minimal', 'polaroid', 'glam'],
+      minimalist: ['minimal', 'none', 'tv', 'newspaper'],
+      cyberpunk: ['neon', 'glitch', 'bold', 'tv', 'comic']
     };
     
     const vibeStyles = styles[vibe as keyof typeof styles] || styles.energetic;
-    return vibeStyles[segmentIndex % vibeStyles.length];
+    
+    // Add variety with transitions - cycle through styles
+    const baseIndex = segmentIndex % vibeStyles.length;
+    
+    // Add some randomness for transitions
+    const transitionOffset = Math.floor(segmentIndex / 3) % 3;
+    const finalIndex = (baseIndex + transitionOffset) % vibeStyles.length;
+    
+    return vibeStyles[finalIndex];
+  }
+
+  /**
+   * Get available frame styles for UI selection
+   */
+  getAvailableFrameStyles(): string[] {
+    return [
+      'none', 'cinematic', 'polaroid', 'neon', 'vintage', 'glitch', 
+      'minimal', 'bold', 'tv', 'comic', 'glam', 'newspaper'
+    ];
+  }
+
+  /**
+   * Generate video edit script with frame transitions
+   */
+  async generateVideoEditScriptWithTransitions(
+    videoBlob: Blob,
+    duration: number,
+    vibe: string,
+    preferredFrameStyle?: string,
+    audioBlob?: Blob
+  ): Promise<EditSegment[]> {
+    // First analyze the video to understand its content
+    const analysis = await this.analyzeVideo(videoBlob, duration);
+    
+    // Generate with frame transitions
+    const segCount = Math.max(2, Math.min(6, Math.floor(duration / 3)));
+    const segDur = duration / segCount;
+    
+    return Array.from({ length: segCount }, (_, i) => {
+      const startTime = i * segDur;
+      const endTime = (i + 1) * segDur;
+      
+      // Add randomness to calculations
+      const randomFactor = 0.8 + ((Date.now() + i) % 10) / 25; // 0.8 to 1.2
+      
+      // Use preferred style if provided, otherwise use vibe-based selection
+      let frameStyle: string;
+      if (preferredFrameStyle && this.getAvailableFrameStyles().includes(preferredFrameStyle)) {
+        // Create transitions between preferred style and vibe-compatible styles
+        if (i % 3 === 0) {
+          frameStyle = preferredFrameStyle; // Use preferred style every 3rd segment
+        } else {
+          frameStyle = this.selectFrameStyle(vibe.toLowerCase(), i);
+        }
+      } else {
+        frameStyle = this.selectFrameStyle(vibe.toLowerCase(), i);
+      }
+      
+      // Vary effects based on video analysis and target vibe with randomness
+      const playbackRate = this.calculatePlaybackRateForVibe(analysis.energy, vibe, i, randomFactor);
+      const cssFilter = this.calculateCssFilterForVibe(analysis.energy, analysis.brightness, vibe, i, randomFactor);
+      const effect = this.selectEffectForVibe(analysis.energy, vibe, i, randomFactor);
+      
+      return {
+        startTime: parseFloat(startTime.toFixed(2)),
+        endTime: parseFloat(endTime.toFixed(2)),
+        playbackRate: Math.min(2.0, Math.max(0.5, playbackRate)),
+        cssFilter,
+        frameStyle,
+        effect
+      };
+    });
   }
 
   /**
