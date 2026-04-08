@@ -260,7 +260,7 @@ export function Settings({ onBack }: SettingsProps) {
               <Brain size={16} className="text-indigo-400" />
               AI Sağlayıcı
             </h2>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 gap-3">
               <button
                 onClick={() => handleSettingChange('aiProvider', 'gemini')}
                 className={`p-3 rounded-xl border text-left transition-all ${
@@ -281,7 +281,18 @@ export function Settings({ onBack }: SettingsProps) {
                 }`}
               >
                 <div className="font-semibold text-sm">Gemma4</div>
-                <div className="text-[10px] mt-0.5 opacity-70">Google Açık</div>
+                <div className="text-[10px] mt-0.5 opacity-70">Google Açük</div>
+              </button>
+              <button
+                onClick={() => handleSettingChange('aiProvider', 'videoanalysis')}
+                className={`p-3 rounded-xl border text-left transition-all ${
+                  settings.aiProvider === 'videoanalysis'
+                    ? 'border-green-500 bg-green-500/10 text-green-300'
+                    : 'border-zinc-800 bg-zinc-900/50 text-zinc-400 hover:bg-zinc-800'
+                }`}
+              >
+                <div className="font-semibold text-sm">Video Analiz</div>
+                <div className="text-[10px] mt-0.5 opacity-70">Hizli Mobil</div>
               </button>
               <button
                 onClick={() => handleSettingChange('aiProvider', 'anythingllm')}

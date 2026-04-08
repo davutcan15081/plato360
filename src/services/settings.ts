@@ -7,7 +7,7 @@ export interface AppSettings {
   anythingllmUrl: string;
   anythingllmApiKey: string;
   anythingllmWorkspace: string;
-  aiProvider: 'gemini' | 'mock' | 'anythingllm' | 'gemma4';
+  aiProvider: 'gemini' | 'mock' | 'anythingllm' | 'gemma4' | 'videoanalysis';
   gemma4BaseUrl: string;
   gemma4Model: 'gemma4:e4b' | 'gemma4:26b-a4b' | 'gemma4:e2b' | 'gemma4:31b';
 }

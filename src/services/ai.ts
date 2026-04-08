@@ -4,6 +4,7 @@ import axios from 'axios';
 import { buildAnythingLLMUrl, withRetry } from '../utils/testConnection';
 import { createGemma4Service, validateGemma4Config } from './gemma4Service';
 import { createGemma4BrowserService } from './gemma4BrowserService';
+import { createVideoAnalysisService } from './videoAnalysisService';
 
 export interface EditSegment {
   startTime: number;
@@ -90,6 +91,12 @@ function validateGemma4(s: any) {
   if (!s.gemma4Model) {
     throw new Error('Gemma4 model seçilmemiş.');
   }
+}
+
+function validateVideoAnalysis(s: any) {
+  // Video analysis works out of the box with Transformers.js
+  // No additional configuration needed
+  return true;
 }
 
 async function getRotatedGeminiKey(): Promise<string> {
@@ -241,6 +248,17 @@ export async function generateAutoMagicEdit(
     }
   }
 
+  if (settings.aiProvider === 'videoanalysis') {
+    validateVideoAnalysis(settings);
+    try {
+      const videoService = await createVideoAnalysisService();
+      return await videoService.generateAutoMagicEdit(videoBlob, duration, audioBlob);
+    } catch (err) {
+      const m = (err as Error).message ?? '';
+      throw new Error(`Video analizi hatası: ${m}`);
+    }
+  }
+
   if (settings.aiProvider === 'anythingllm') {
     return await generateAutoMagicEditAnythingLLM(videoBlob, duration, audioBlob, settings);
   }
@@ -264,6 +282,17 @@ export async function generateVideoEditScript(
   if (settings.aiProvider === 'gemma4') {
     validateGemma4(settings);
     return generateVideoEditScriptGemma4(videoBlob, duration, vibe, audioBlob, settings);
+  }
+
+  if (settings.aiProvider === 'videoanalysis') {
+    validateVideoAnalysis(settings);
+    try {
+      const videoService = await createVideoAnalysisService();
+      return await videoService.generateVideoEditScript(videoBlob, duration, vibe, audioBlob);
+    } catch (err) {
+      const m = (err as Error).message ?? '';
+      throw new Error(`Video analizi hatasý: ${m}`);
+    }
   }
 
   if (settings.aiProvider === 'anythingllm') {
