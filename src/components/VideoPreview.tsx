@@ -2,7 +2,7 @@ import React, { useRef, useState, useEffect } from 'react';
 import { EditSegment } from '../services/ai';
 import {
   Play, Pause, RotateCcw, Type, Trash2, Check, Download,
-  Loader2, AlignLeft, AlignCenter, AlignRight, Frame, Sparkles, X
+  Loader2, AlignLeft, AlignCenter, AlignRight, Frame, Sparkles, X, Music
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Filesystem, Directory } from '@capacitor/filesystem';
@@ -53,7 +53,7 @@ const EFFECT_OPTIONS = [
   { key: 'matrix', label: 'Matrix' },
 ];
 
-type Panel = 'text' | 'frame' | 'effect' | null;
+type Panel = 'text' | 'frame' | 'effect' | 'music' | null;
 
 export function VideoPreview({
   videoUrl: initialVideoUrl, videoBlob, editScript, vibe,
@@ -98,10 +98,35 @@ export function VideoPreview({
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
 
+  // Müzik kırpma
+  const musicFileRef = useRef<HTMLInputElement>(null);
+  const [audioDuration, setAudioDuration] = useState(0);
+  const [trimStart, setTrimStart] = useState(0);
+  const [trimEnd, setTrimEnd] = useState(0); // 0 = henüz yüklenmedi
+  const trimStartRef = useRef(0);
+  const trimEndRef = useRef(0);
+
   /* effects */
   useEffect(() => {
     if (customAudioBlob) { const u = URL.createObjectURL(customAudioBlob); setCustomAudioUrl(u); return () => URL.revokeObjectURL(u); }
   }, [customAudioBlob]);
+
+  // Ses süresi yüklenince trim sınırlarını başlat
+  useEffect(() => {
+    const a = audioRef.current; if (!a) return;
+    const onMeta = () => {
+      const d = a.duration;
+      if (!d || !isFinite(d)) return;
+      setAudioDuration(d);
+      // Sadece ilk yüklemede veya yeni ses geldiğinde sıfırla
+      setTrimStart(0); trimStartRef.current = 0;
+      setTrimEnd(d);   trimEndRef.current = d;
+    };
+    a.addEventListener('loadedmetadata', onMeta);
+    // Eğer zaten yüklüyse hemen tetikle
+    if (a.duration && isFinite(a.duration)) onMeta();
+    return () => a.removeEventListener('loadedmetadata', onMeta);
+  }, [customAudioUrl]);
 
   useEffect(() => { setVideoUrl(initialVideoUrl); }, [initialVideoUrl]);
 
@@ -120,6 +145,7 @@ export function VideoPreview({
 
   useEffect(() => {
     let raf: number, lastRate = -1;
+    const DRIFT_THRESHOLD = 0.15;
     const tick = () => {
       const v = videoRef.current;
       const a = audioRef.current;
@@ -127,26 +153,17 @@ export function VideoPreview({
         const time = v.currentTime;
         const seg = editScript.find(s => time >= s.startTime && time <= s.endTime) ?? editScript.at(-1)!;
         if (seg && seg !== segRef.current) { setCurrentSeg(seg); segRef.current = seg; }
-        
-        // Sync audio with video playback rate
-        if (seg) { 
-          let r = seg.playbackRate ?? 1; 
-          if (!r || isNaN(r) || r <= 0) r = 1; 
-          r = Math.min(5, Math.max(0.5, r)); 
-          
-          // Apply playback rate to both video and audio
-          if (r !== lastRate) { 
-            v.playbackRate = r; 
-            if (a && !a.paused) {
-              a.playbackRate = r; // Sync audio playback rate with video
-            }
-            lastRate = r; 
-          }
-        }
+        if (seg) { let r = seg.playbackRate ?? 1; if (!r || isNaN(r) || r <= 0) r = 1; r = Math.min(5, Math.max(0.5, r)); if (r !== lastRate) { v.playbackRate = r; lastRate = r; } }
 
-        // Sync audio time with video time
-        if (a && Math.abs(a.currentTime - v.currentTime) > 0.1) {
-          a.currentTime = v.currentTime;
+        // Trim loop: trimEnd'e ulaşınca trimStart'a dön
+        if (a && !a.paused && trimEndRef.current > 0) {
+          if (a.currentTime >= trimEndRef.current - 0.05) {
+            a.currentTime = trimStartRef.current;
+          }
+          // trimStart'ın altındaysa da düzelt (seek sonrası vb.)
+          if (a.currentTime < trimStartRef.current) {
+            a.currentTime = trimStartRef.current;
+          }
         }
 
         let rf = userFrame, re = userEffect;
@@ -195,6 +212,8 @@ export function VideoPreview({
     if (isPlaying) { v.pause(); a.pause(); setIsPlaying(false); }
     else {
       v.muted = true;
+      // Ses pozisyonunu trimStart'a hizala
+      a.currentTime = trimStartRef.current;
       let ok = false;
       try { await v.play(); ok = true; } catch { }
       try { await a.play(); } catch { }
@@ -335,17 +354,7 @@ export function VideoPreview({
       if (!frameTiming.isFull && (t < frameTiming.startTime || t > frameTiming.endTime)) rf = seg?.frameStyle || 'none';
       if (!effectTiming.isFull && (t < effectTiming.startTime || t > effectTiming.endTime)) re = seg?.effect || 'none';
       let r = seg?.playbackRate ?? 1; if (!r || isNaN(r) || r <= 0) r = 1; r = Math.min(5, Math.max(0.5, r));
-      if (r !== lastRate) { 
-        video.playbackRate = r; 
-        audio.playbackRate = r; // Sync audio playback rate with video during export
-        lastRate = r; 
-      }
-      
-      // Sync audio time with video time during export
-      if (Math.abs(audio.currentTime - video.currentTime) > 0.1) {
-        audio.currentTime = video.currentTime;
-      }
-      
+      if (r !== lastRate) { video.playbackRate = r; lastRate = r; }
       ctx.filter = seg?.cssFilter && seg.cssFilter !== 'none' ? seg.cssFilter : 'none';
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       initPfx(re);
@@ -494,7 +503,6 @@ export function VideoPreview({
       <audio
         ref={audioRef}
         src={customAudioUrl || VIBE_AUDIO[vibe] || VIBE_AUDIO['Energetic']}
-        loop
         crossOrigin={customAudioUrl ? undefined : 'anonymous'}
       />
 
@@ -625,7 +633,11 @@ export function VideoPreview({
             onChange={e => {
               const v = +e.target.value;
               setVideoProgress(v);
-              if (videoRef.current?.duration) videoRef.current.currentTime = (v / 100) * videoRef.current.duration;
+              if (videoRef.current?.duration) {
+                const t = (v / 100) * videoRef.current.duration;
+                videoRef.current.currentTime = t;
+                if (audioRef.current) audioRef.current.currentTime = trimStartRef.current;
+              }
             }}
             className="absolute inset-0 w-full opacity-0 cursor-pointer"
           />
@@ -650,6 +662,7 @@ export function VideoPreview({
             <ToolBtn icon={<Type size={17} />} label="Metin" active={openPanel === 'text'} onClick={() => togglePanel('text')} />
             <ToolBtn icon={<Frame size={17} />} label="Çerçeve" active={openPanel === 'frame'} onClick={() => togglePanel('frame')} />
             <ToolBtn icon={<Sparkles size={17} />} label="Efekt" active={openPanel === 'effect'} onClick={() => togglePanel('effect')} />
+            <ToolBtn icon={<Music size={17} />} label="Müzik" active={openPanel === 'music'} onClick={() => togglePanel('music')} />
           </div>
 
           {/* Center: play + action buttons */}
@@ -901,6 +914,155 @@ export function VideoPreview({
               onToggle={v => setEffectTiming(p => ({ ...p, isFull: v }))}
               onStart={v => setEffectTiming(p => ({ ...p, startTime: v }))}
               onEnd={v => setEffectTiming(p => ({ ...p, endTime: v }))} />
+          </Sheet>
+        )}
+      </AnimatePresence>
+
+      {/* ── MÜZİK PANELİ ─────────────────────────────────────────────────── */}
+      <AnimatePresence>
+        {openPanel === 'music' && (
+          <Sheet title="Müzik" onClose={() => setOpenPanel(null)}>
+            {/* Gizli file input */}
+            <input
+              ref={musicFileRef}
+              type="file"
+              accept="audio/*"
+              className="hidden"
+              onChange={e => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                const url = URL.createObjectURL(file);
+                // Önceki custom url'yi temizle
+                if (customAudioUrl) URL.revokeObjectURL(customAudioUrl);
+                setCustomAudioUrl(url);
+                // Trim sıfırlanacak — metadata effect halleder
+                setTrimStart(0); trimStartRef.current = 0;
+                setTrimEnd(0);   trimEndRef.current = 0;
+                e.target.value = '';
+              }}
+            />
+
+            {/* Mevcut müzik adı + değiştir butonu */}
+            <div
+              className="flex items-center gap-3 px-3 py-2.5 rounded-xl"
+              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}
+            >
+              <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+                style={{ background: 'rgba(245,158,11,0.15)' }}>
+                <Music size={15} style={{ color: '#f59e0b' }} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-white text-xs font-bold truncate">
+                  {customAudioUrl ? 'Özel Müzik' : `${vibe} Teması`}
+                </p>
+                <p className="text-zinc-600 text-[10px] font-mono tabular-nums">
+                  {audioDuration > 0 ? fmt(audioDuration) : '--:--'}
+                  {trimEnd > 0 && audioDuration > 0 && (trimStart > 0 || trimEnd < audioDuration) &&
+                    <span className="ml-1 text-amber-500/70">
+                      · kırpma: {fmt(trimStart)}–{fmt(trimEnd)}
+                    </span>
+                  }
+                </p>
+              </div>
+              <button
+                onClick={() => musicFileRef.current?.click()}
+                className="px-3 py-1.5 rounded-lg text-xs font-bold shrink-0 transition-all active:scale-95"
+                style={{ background: 'rgba(245,158,11,0.12)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.2)' }}
+              >
+                Değiştir
+              </button>
+            </div>
+
+            {/* Kırpma alanı — sadece ses yüklüyse göster */}
+            {audioDuration > 0 && trimEnd > 0 && (
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-zinc-500 uppercase tracking-widest font-bold">Kırpma Aralığı</span>
+                  <button
+                    onClick={() => {
+                      setTrimStart(0); trimStartRef.current = 0;
+                      setTrimEnd(audioDuration); trimEndRef.current = audioDuration;
+                    }}
+                    className="text-[10px] text-zinc-600 hover:text-zinc-400 transition-colors font-medium"
+                  >
+                    Sıfırla
+                  </button>
+                </div>
+
+                {/* Trim bar */}
+                <div className="relative h-10 flex items-center">
+                  {/* Arka plan track */}
+                  <div
+                    className="absolute inset-x-0 h-2 rounded-full"
+                    style={{ background: 'rgba(255,255,255,0.06)' }}
+                  />
+                  {/* Seçili alan */}
+                  <div
+                    className="absolute h-2 rounded-full"
+                    style={{
+                      left: `${(trimStart / audioDuration) * 100}%`,
+                      right: `${100 - (trimEnd / audioDuration) * 100}%`,
+                      background: 'linear-gradient(90deg, #f59e0b, #ea580c)',
+                      boxShadow: '0 0 6px rgba(245,158,11,0.4)',
+                    }}
+                  />
+                  {/* Start thumb */}
+                  <input
+                    type="range" min={0} max={audioDuration} step={0.1}
+                    value={trimStart}
+                    onChange={e => {
+                      const val = Math.min(+e.target.value, trimEnd - 0.5);
+                      setTrimStart(val); trimStartRef.current = val;
+                      if (audioRef.current) audioRef.current.currentTime = val;
+                    }}
+                    className="absolute inset-0 w-full opacity-0 cursor-pointer z-10"
+                    style={{ pointerEvents: 'auto' }}
+                  />
+                  {/* End thumb — üstüne bindirilmiş ikinci range */}
+                  <input
+                    type="range" min={0} max={audioDuration} step={0.1}
+                    value={trimEnd}
+                    onChange={e => {
+                      const val = Math.max(+e.target.value, trimStart + 0.5);
+                      setTrimEnd(val); trimEndRef.current = val;
+                    }}
+                    className="absolute inset-0 w-full opacity-0 cursor-pointer z-20"
+                    style={{ pointerEvents: 'auto' }}
+                  />
+                  {/* Start handle görsel */}
+                  <div
+                    className="absolute w-4 h-4 rounded-full border-2 border-amber-400 bg-zinc-900 -translate-x-1/2 z-30 pointer-events-none"
+                    style={{ left: `${(trimStart / audioDuration) * 100}%`, boxShadow: '0 0 0 2px rgba(245,158,11,0.3)' }}
+                  />
+                  {/* End handle görsel */}
+                  <div
+                    className="absolute w-4 h-4 rounded-full border-2 border-orange-500 bg-zinc-900 -translate-x-1/2 z-30 pointer-events-none"
+                    style={{ left: `${(trimEnd / audioDuration) * 100}%`, boxShadow: '0 0 0 2px rgba(234,88,12,0.3)' }}
+                  />
+                </div>
+
+                {/* Zaman göstergesi */}
+                <div className="flex justify-between items-center">
+                  <div
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg"
+                    style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.15)' }}
+                  >
+                    <div className="w-2 h-2 rounded-full bg-amber-400" />
+                    <span className="text-amber-400 text-[11px] font-mono font-bold tabular-nums">{fmt(trimStart)}</span>
+                  </div>
+                  <span className="text-zinc-700 text-[10px] font-mono tabular-nums">
+                    {fmt(trimEnd - trimStart)} seçili
+                  </span>
+                  <div
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg"
+                    style={{ background: 'rgba(234,88,12,0.08)', border: '1px solid rgba(234,88,12,0.15)' }}
+                  >
+                    <div className="w-2 h-2 rounded-full bg-orange-500" />
+                    <span className="text-orange-400 text-[11px] font-mono font-bold tabular-nums">{fmt(trimEnd)}</span>
+                  </div>
+                </div>
+              </div>
+            )}
           </Sheet>
         )}
       </AnimatePresence>
