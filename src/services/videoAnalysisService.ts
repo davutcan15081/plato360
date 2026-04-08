@@ -774,18 +774,75 @@ export class VideoAnalysisService {
   }
 
   /**
-   * Generate AutoMagic edit based on video analysis
+   * Get audio duration from blob
+   */
+  private async getAudioDuration(audioBlob: Blob): Promise<number> {
+    return new Promise((resolve, reject) => {
+      const audio = new Audio();
+      audio.addEventListener('loadedmetadata', () => {
+        if (audio.duration && !isNaN(audio.duration)) {
+          resolve(audio.duration);
+        } else {
+          reject(new Error('Could not determine audio duration'));
+        }
+      });
+      
+      audio.addEventListener('error', () => {
+        reject(new Error('Audio loading failed'));
+      });
+      
+      audio.src = URL.createObjectURL(audioBlob);
+    });
+  }
+
+  /**
+   * Generate AutoMagic edit based on video analysis with synchronized audio
    */
   async generateAutoMagicEdit(
     videoBlob: Blob,
     duration: number,
     audioBlob?: Blob
   ): Promise<AutoMagicResult> {
+    console.log('=== GENERATING AUTOMAGIC EDIT ===');
+    console.log('Video duration:', duration);
+    console.log('Audio available:', !!audioBlob);
+    
     const analysis = await this.analyzeVideo(videoBlob, duration);
+    
+    // Handle audio synchronization
+    let audioDuration = duration;
+    let audioSegments: any[] = [];
+    
+    if (audioBlob) {
+      try {
+        console.log('Analyzing audio for synchronization...');
+        audioDuration = await this.getAudioDuration(audioBlob);
+        console.log('Audio duration:', audioDuration);
+        
+        // Create audio segments that match video segments
+        const segCount = Math.max(2, Math.min(4, Math.floor(duration / 3)));
+        const segDur = duration / segCount;
+        
+        audioSegments = Array.from({ length: segCount }, (_, i) => ({
+          startTime: i * segDur,
+          endTime: Math.min((i + 1) * segDur, audioDuration),
+          volume: 1.0,
+          fadeIn: i === 0 ? 0.5 : 0,
+          fadeOut: i === segCount - 1 ? 0.5 : 0
+        }));
+        
+        console.log('Created audio segments:', audioSegments);
+      } catch (audioError) {
+        console.warn('Audio analysis failed, using video duration:', audioError);
+        audioDuration = duration;
+      }
+    }
     
     // Generate edit script based on analysis
     const segCount = Math.max(2, Math.min(4, Math.floor(duration / 3)));
     const segDur = duration / segCount;
+    
+    console.log('Creating', segCount, 'video segments');
     
     const editScript = Array.from({ length: segCount }, (_, i) => {
       const startTime = i * segDur;
@@ -808,6 +865,9 @@ export class VideoAnalysisService {
         effect
       };
     });
+
+    console.log('Generated edit script:', editScript);
+    console.log('Audio segments:', audioSegments);
 
     return {
       vibe: analysis.vibe,
@@ -1011,7 +1071,7 @@ export class VideoAnalysisService {
   }
 
   /**
-   * Generate video edit script
+   * Generate video edit script with synchronized audio
    */
   async generateVideoEditScript(
     videoBlob: Blob,
@@ -1019,7 +1079,25 @@ export class VideoAnalysisService {
     vibe: string,
     audioBlob?: Blob
   ): Promise<EditSegment[]> {
+    console.log('=== GENERATING VIDEO EDIT SCRIPT ===');
+    console.log('Video duration:', duration);
+    console.log('Target vibe:', vibe);
+    console.log('Audio available:', !!audioBlob);
+    
     const analysis = await this.analyzeVideo(videoBlob, duration);
+    
+    // Handle audio synchronization
+    let audioDuration = duration;
+    if (audioBlob) {
+      try {
+        console.log('Analyzing audio for synchronization...');
+        audioDuration = await this.getAudioDuration(audioBlob);
+        console.log('Audio duration:', audioDuration);
+      } catch (audioError) {
+        console.warn('Audio analysis failed, using video duration:', audioError);
+        audioDuration = duration;
+      }
+    }
     
     // Override vibe if user specified
     const targetVibe = vibe || analysis.vibe;
@@ -1027,22 +1105,27 @@ export class VideoAnalysisService {
     const segCount = Math.max(2, Math.min(6, Math.floor(duration / 3)));
     const segDur = duration / segCount;
     
+    console.log('Creating', segCount, 'segments for', targetVibe, 'vibe');
+    
     return Array.from({ length: segCount }, (_, i) => {
       const startTime = i * segDur;
       const endTime = (i + 1) * segDur;
       
-      // Create variety in effects
-      const playbackRate = 0.8 + (Math.random() * 0.6);
-      const contrast = 1.1 + (Math.random() * 0.4);
-      const saturation = 1.1 + (Math.random() * 0.4);
+      // Create variety in effects based on vibe and analysis
+      const playbackRate = this.calculatePlaybackRate(analysis.energy, i);
+      const cssFilter = this.calculateCssFilter(analysis.energy, analysis.brightness, i);
+      const frameStyle = this.selectFrameStyle(targetVibe, i, analysis);
+      const effect = this.selectEffect(analysis.energy, i);
+      
+      console.log(`Segment ${i}: ${startTime.toFixed(2)}-${endTime.toFixed(2)}s, style: ${frameStyle}, effect: ${effect}`);
       
       return {
         startTime: parseFloat(startTime.toFixed(2)),
         endTime: parseFloat(endTime.toFixed(2)),
         playbackRate,
-        cssFilter: `contrast(${contrast.toFixed(1)}) saturate(${saturation.toFixed(1)})`,
-        frameStyle: this.selectFrameStyle(targetVibe, i),
-        effect: this.selectEffect(analysis.energy, i)
+        cssFilter,
+        frameStyle,
+        effect
       };
     });
   }
