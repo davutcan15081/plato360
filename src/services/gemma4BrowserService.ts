@@ -9,6 +9,7 @@ export interface Gemma4BrowserConfig {
   maxNewTokens: number;
   temperature: number;
   topP: number;
+  isMobile?: boolean; // Mobile device detection
 }
 
 export interface GenerationProgress {
@@ -26,13 +27,16 @@ export class Gemma4BrowserService {
   private responseCache = new Map<string, any>();
 
   constructor(config: Partial<Gemma4BrowserConfig> = {}) {
+    const isMobile = Gemma4BrowserService.isMobileDevice();
+    
     this.config = {
       model: 'onnx-community/gemma-4-E2B-it-ONNX', // Use E2B for better compatibility
-      device: Gemma4BrowserService.checkWebGPUSupport() ? 'webgpu' : 'wasm', // Auto-detect WebGPU
+      device: 'wasm', // Force WASM on mobile for better compatibility
       dtype: 'fp32', // Use fp32 for ONNX compatibility
-      maxNewTokens: 256, // Reduced for faster generation
-      temperature: 0.5, // Lower temperature for more deterministic responses
-      topP: 0.8, // Lower top_p for faster convergence
+      maxNewTokens: isMobile ? 128 : 256, // Much lower for mobile
+      temperature: isMobile ? 0.3 : 0.5, // Even lower for mobile
+      topP: isMobile ? 0.6 : 0.8, // More focused for mobile
+      isMobile,
       ...config
     };
   }
@@ -42,6 +46,14 @@ export class Gemma4BrowserService {
    */
   static checkWebGPUSupport(): boolean {
     return 'gpu' in navigator && 'getAdapter' in (navigator as any).gpu;
+  }
+
+  /**
+   * Detect mobile device
+   */
+  static isMobileDevice(): boolean {
+    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+           window.innerWidth < 768;
   }
 
   /**
@@ -128,7 +140,9 @@ export class Gemma4BrowserService {
   private getCachedResponse<T>(prompt: string): T | null {
     const key = this.getCacheKey(prompt);
     const cached = this.responseCache.get(key);
-    if (cached && Date.now() - cached.timestamp < 300000) { // 5 minutes cache
+    const cacheTTL = this.config.isMobile ? 600000 : 300000; // 10 min for mobile, 5 min for desktop
+    
+    if (cached && Date.now() - cached.timestamp < cacheTTL) {
       return cached.data;
     }
     return null;
@@ -144,8 +158,9 @@ export class Gemma4BrowserService {
       timestamp: Date.now()
     });
     
-    // Limit cache size
-    if (this.responseCache.size > 50) {
+    // Limit cache size - smaller for mobile
+    const maxCacheSize = this.config.isMobile ? 20 : 50;
+    if (this.responseCache.size > maxCacheSize) {
       const oldestKey = this.responseCache.keys().next().value;
       this.responseCache.delete(oldestKey);
     }
@@ -309,7 +324,10 @@ Kurallar:
     duration: number,
     audioBlob?: Blob
   ): Promise<AutoMagicResult> {
-    const prompt = `${duration.toFixed(1)}s video edit script. Energetic vibe.
+    // Ultra-simplified mobile prompt
+    const prompt = this.config.isMobile 
+      ? `${duration.toFixed(1)}s video. JSON: {"vibe":"Energetic","editScript":[],"texts":[]}`
+      : `${duration.toFixed(1)}s video edit script. Energetic vibe.
 JSON: {"vibe":"Energetic","editScript":[],"texts":[]}
 Create 2-4 segments with: startTime, endTime, playbackRate(0.5-2.0), cssFilter, frameStyle, effect.
 frameStyle: cinematic|neon|vintage|glitch|minimal|bold
@@ -356,7 +374,9 @@ effect: none|snow|confetti|rain|stars`;
       effect: 'none',
     }));
 
-    const prompt = `${duration.toFixed(1)}s video edit script for "${vibe}" vibe.
+    const prompt = this.config.isMobile
+      ? `${duration.toFixed(1)}s "${vibe}" video. JSON array with segments.`
+      : `${duration.toFixed(1)}s video edit script for "${vibe}" vibe.
 JSON array with segments: startTime, endTime, playbackRate(0.5-2.0), cssFilter, frameStyle, effect.
 frameStyle: cinematic|neon|vintage|glitch|minimal|bold
 effect: none|snow|confetti|rain|stars
@@ -401,16 +421,18 @@ export async function createGemma4BrowserService(
   progressCallback?: (progress: GenerationProgress) => void
 ): Promise<Gemma4BrowserService> {
   const settings = await getSettings();
+  const isMobile = Gemma4BrowserService.isMobileDevice();
   
   const config: Partial<Gemma4BrowserConfig> = {
     model: settings.gemma4Model === 'gemma4:e2b' 
       ? 'onnx-community/gemma-4-E2B-it-ONNX'
       : 'onnx-community/gemma-4-E4B-it-ONNX',
-    device: Gemma4BrowserService.checkWebGPUSupport() ? 'webgpu' : 'wasm', // Auto-detect WebGPU
+    device: 'wasm', // Force WASM for mobile compatibility
     dtype: 'fp32', // Use fp32 for ONNX compatibility
-    maxNewTokens: 200, // Reduced for video edit tasks
-    temperature: 0.4, // Lower for more predictable JSON output
-    topP: 0.7 // More focused generation
+    maxNewTokens: isMobile ? 100 : 200, // Much lower for mobile
+    temperature: isMobile ? 0.2 : 0.4, // Very low for mobile
+    topP: isMobile ? 0.5 : 0.7, // Very focused for mobile
+    isMobile
   };
 
   const service = new Gemma4BrowserService(config);
