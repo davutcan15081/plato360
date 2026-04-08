@@ -2,7 +2,7 @@ import React, { useRef, useState, useEffect } from 'react';
 import { EditSegment } from '../services/ai';
 import {
   Play, Pause, RotateCcw, Type, Trash2, Check, Download,
-  Loader2, AlignLeft, AlignCenter, AlignRight, Frame, Sparkles, X, Music
+  Loader2, AlignLeft, AlignCenter, AlignRight, Frame, Sparkles, X, Music, Scissors
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Filesystem, Directory } from '@capacitor/filesystem';
@@ -105,6 +105,9 @@ export function VideoPreview({
   const [trimEnd, setTrimEnd] = useState(0); // 0 = henüz yüklenmedi
   const trimStartRef = useRef(0);
   const trimEndRef = useRef(0);
+  const [isTrimming, setIsTrimming] = useState(false);   // kaydet işlemi sürüyor
+  const [trimApplied, setTrimApplied] = useState(false); // son kayıt başarılı feedback
+  const sourceBlobRef = useRef<string | null>(null);      // kırpılmamış orijinal url
 
   /* effects */
   useEffect(() => {
@@ -263,6 +266,116 @@ export function VideoPreview({
       quicksand: 'font-["Quicksand"] font-bold', lobster: 'font-["Lobster"]', abril: 'font-["Abril_Fatface"]',
     };
     return m[f] ?? 'font-["Inter"] font-black tracking-tighter uppercase';
+  };
+
+  /* Müzik kırpma — Web Audio offline render */
+  const applyTrim = async () => {
+    const src = sourceBlobRef.current || customAudioUrl;
+    if (!src || isTrimming) return;
+    const start = trimStartRef.current;
+    const end   = trimEndRef.current;
+    if (end <= start) return;
+
+    setIsTrimming(true);
+    try {
+      // 1. Kaynağı fetch et → ArrayBuffer
+      const resp = await fetch(src);
+      const buf  = await resp.arrayBuffer();
+
+      // 2. Decode
+      const AC  = window.AudioContext || (window as any).webkitAudioContext;
+      const ctx = new AC() as AudioContext;
+      const decoded = await ctx.decodeAudioData(buf);
+      await ctx.close();
+
+      // 3. Seçili aralığı offline context'te render et
+      const sampleRate  = decoded.sampleRate;
+      const startFrame  = Math.floor(start * sampleRate);
+      const endFrame    = Math.min(Math.ceil(end * sampleRate), decoded.length);
+      const frameCount  = endFrame - startFrame;
+      const channels    = decoded.numberOfChannels;
+
+      const offCtx = new OfflineAudioContext(channels, frameCount, sampleRate);
+      const offBuf  = offCtx.createBuffer(channels, frameCount, sampleRate);
+      for (let ch = 0; ch < channels; ch++) {
+        offBuf.copyToChannel(
+          decoded.getChannelData(ch).subarray(startFrame, endFrame), ch
+        );
+      }
+      const src2 = offCtx.createBufferSource();
+      src2.buffer = offBuf;
+      src2.connect(offCtx.destination);
+      src2.start();
+      const rendered = await offCtx.startRendering();
+
+      // 4. PCM → WAV blob
+      const wavBlob = audioBufferToWav(rendered);
+      const newUrl  = URL.createObjectURL(wavBlob);
+
+      // 5. Eski kırpılmış url'yi temizle (orijinal kaynağa dokunma)
+      if (customAudioUrl && customAudioUrl !== sourceBlobRef.current) {
+        URL.revokeObjectURL(customAudioUrl);
+      }
+
+      // 6. Audio elementini güncelle — hemen çal
+      setCustomAudioUrl(newUrl);
+      setAudioDuration(rendered.duration);
+      // Trim sınırlarını yeni dosyaya göre sıfırla
+      setTrimStart(0); trimStartRef.current = 0;
+      setTrimEnd(rendered.duration); trimEndRef.current = rendered.duration;
+
+      if (audioRef.current) {
+        audioRef.current.src = newUrl;
+        audioRef.current.load();
+        audioRef.current.currentTime = 0;
+        if (isPlaying) {
+          try { await audioRef.current.play(); } catch {}
+        }
+      }
+
+      setTrimApplied(true);
+      setTimeout(() => setTrimApplied(false), 2000);
+    } catch (err) {
+      console.error('Trim failed:', err);
+      alert('Kırpma işlemi başarısız oldu.');
+    } finally {
+      setIsTrimming(false);
+    }
+  };
+
+  /** PCM AudioBuffer → WAV Blob (44-byte header + 16-bit PCM) */
+  const audioBufferToWav = (buffer: AudioBuffer): Blob => {
+    const numCh   = buffer.numberOfChannels;
+    const sr      = buffer.sampleRate;
+    const len     = buffer.length;
+    const bytesPerSample = 2;
+    const blockAlign     = numCh * bytesPerSample;
+    const byteRate       = sr * blockAlign;
+    const dataSize       = len * blockAlign;
+    const wavBuf         = new ArrayBuffer(44 + dataSize);
+    const view           = new DataView(wavBuf);
+
+    const w = (off: number, val: number, sz: number) => {
+      if (sz === 4) view.setUint32(off, val, true);
+      else          view.setUint16(off, val, true);
+    };
+    const writeStr = (off: number, s: string) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+
+    writeStr(0, 'RIFF'); w(4, 36 + dataSize, 4); writeStr(8, 'WAVE');
+    writeStr(12, 'fmt '); w(16, 16, 4); w(20, 1, 2); w(22, numCh, 2);
+    w(24, sr, 4); w(28, byteRate, 4); w(32, blockAlign, 2); w(34, 16, 2);
+    writeStr(36, 'data'); w(40, dataSize, 4);
+
+    // Interleave channels
+    let offset = 44;
+    for (let i = 0; i < len; i++) {
+      for (let ch = 0; ch < numCh; ch++) {
+        const s = Math.max(-1, Math.min(1, buffer.getChannelData(ch)[i]));
+        view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+        offset += 2;
+      }
+    }
+    return new Blob([wavBuf], { type: 'audio/wav' });
   };
 
   /* export */
@@ -935,9 +1048,11 @@ export function VideoPreview({
                 // Önceki custom url'yi temizle
                 if (customAudioUrl) URL.revokeObjectURL(customAudioUrl);
                 setCustomAudioUrl(url);
+                sourceBlobRef.current = url; // orijinal kaynağı sakla
                 // Trim sıfırlanacak — metadata effect halleder
                 setTrimStart(0); trimStartRef.current = 0;
                 setTrimEnd(0);   trimEndRef.current = 0;
+                setTrimApplied(false);
                 e.target.value = '';
               }}
             />
@@ -1061,6 +1176,30 @@ export function VideoPreview({
                     <span className="text-orange-400 text-[11px] font-mono font-bold tabular-nums">{fmt(trimEnd)}</span>
                   </div>
                 </div>
+
+                {/* Kaydet butonu */}
+                <button
+                  onClick={applyTrim}
+                  disabled={isTrimming || trimEnd <= trimStart || (trimStart === 0 && trimEnd === audioDuration)}
+                  className="w-full py-2.5 rounded-xl text-sm font-bold tracking-wide transition-all active:scale-[0.98] flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{
+                    background: trimApplied
+                      ? 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)'
+                      : 'linear-gradient(135deg, #f59e0b 0%, #ea580c 100%)',
+                    color: '#000',
+                    boxShadow: trimApplied
+                      ? '0 4px 16px rgba(34,197,94,0.3)'
+                      : '0 4px 16px rgba(245,158,11,0.25)',
+                  }}
+                >
+                  {isTrimming ? (
+                    <><Loader2 size={14} className="animate-spin" /> Kırpılıyor...</>
+                  ) : trimApplied ? (
+                    <><Check size={14} /> Uygulandı</>
+                  ) : (
+                    <><Scissors size={14} /> Kırp ve Uygula</>
+                  )}
+                </button>
               </div>
             )}
           </Sheet>
