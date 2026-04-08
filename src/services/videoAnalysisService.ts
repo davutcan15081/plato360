@@ -57,76 +57,154 @@ export class VideoAnalysisService {
   }
 
   /**
-   * Initialize the models
+   * Initialize the models with mobile optimizations
    */
   async initialize(progressCallback?: (progress: number, message: string) => void): Promise<void> {
     if (this.isInitialized) return;
 
     try {
+      const isMobile = this.isMobile();
+      console.log('Initializing video analysis service on', isMobile ? 'mobile' : 'desktop');
+      
       progressCallback?.(10, 'Model yükleniyor...');
       
-      // Initialize image classification pipeline
-      this.classifier = await pipeline('image-classification', this.config.model, {
-        progress_callback: (info: any) => {
-          if (info.status === 'progress') {
-            const progress = 10 + (info.progress * 0.8); // 10-90%
-            progressCallback?.(progress, `Model yükleniyor... ${Math.round(info.progress)}%`);
-          }
-        },
-      });
-
-      progressCallback?.(90, 'Özellik çikarici hazirlaniyor...');
+      // Use lighter model for mobile
+      const modelToUse = isMobile ? 'Xenova/mobilenet_v2_1.0_224' : this.config.model;
+      console.log('Using model:', modelToUse);
       
-      // Initialize feature extraction for frame analysis
-      this.featureExtractor = await pipeline('image-feature-extraction', this.config.model, {});
+      // Initialize image classification pipeline with mobile settings
+      try {
+        this.classifier = await pipeline('image-classification', modelToUse, {
+          progress_callback: (info: any) => {
+            if (info.status === 'progress') {
+              const progress = 10 + (info.progress * 0.8); // 10-90%
+              progressCallback?.(progress, `Model yükleniyor... ${Math.round(info.progress)}%`);
+            }
+          },
+        });
+        
+        console.log('Classifier loaded successfully');
+      } catch (classifierError) {
+        console.warn('Classifier failed, trying fallback model:', classifierError);
+        
+        // Fallback to even simpler model
+        try {
+          this.classifier = await pipeline('image-classification', 'Xenova/mobilenet_v2_0.35_96', {
+            progress_callback: (info: any) => {
+              if (info.status === 'progress') {
+                const progress = 10 + (info.progress * 0.8);
+                progressCallback?.(progress, `Yedek model yükleniyor... ${Math.round(info.progress)}%`);
+              }
+            },
+          });
+          console.log('Fallback classifier loaded');
+        } catch (fallbackError) {
+          console.error('All classifiers failed:', fallbackError);
+          throw new Error('Model yüklenemedi - internet baglantinizi kontrol edin');
+        }
+      }
+
+      // Skip feature extractor on mobile for performance
+      if (!isMobile) {
+        progressCallback?.(90, 'Özellik çikarici hazirlaniyor...');
+        
+        try {
+          this.featureExtractor = await pipeline('image-feature-extraction', this.config.model, {});
+          console.log('Feature extractor loaded');
+        } catch (featureError) {
+          console.warn('Feature extractor failed, continuing without it:', featureError);
+          this.featureExtractor = null;
+        }
+      } else {
+        console.log('Skipping feature extractor on mobile for performance');
+        this.featureExtractor = null;
+      }
 
       progressCallback?.(100, 'Video analizi hazir!');
       this.isInitialized = true;
+      console.log('Video analysis service initialized successfully');
       
     } catch (error) {
       console.error('Video analysis service initialization failed:', error);
+      
+      // Provide more specific error messages
+      if (error instanceof Error) {
+        if (error.message.includes('fetch')) {
+          throw new Error('Model indirilemedi - internet baglantinizi kontrol edin');
+        } else if (error.message.includes('memory') || error.message.includes('size')) {
+          throw new Error('Model için yetersiz bellek - uygulamayi yeniden baslatin');
+        } else if (error.message.includes('timeout')) {
+          throw new Error('Model yüklemesi zaman asimina ugradi - tekrar deneyin');
+        }
+      }
+      
       throw new Error('Video analizi servisi yüklenemedi');
     }
   }
 
   /**
-   * Extract frames from video blob
+   * Extract frames from video blob with mobile optimizations
    */
   private async extractFrames(videoBlob: Blob, maxFrames: number): Promise<VideoFrame[]> {
+    const isMobile = this.isMobile();
+    
+    // Reduce frame count on mobile for performance
+    const mobileOptimizedFrames = isMobile ? Math.min(maxFrames, 2) : maxFrames;
+    console.log(`Extracting ${mobileOptimizedFrames} frames on ${isMobile ? 'mobile' : 'desktop'}`);
+    
     return new Promise((resolve) => {
       const video = document.createElement('video');
       video.preload = 'metadata';
       video.muted = true;
-      (video as any).playsInline = true;
+      video.playsInline = true; // Mobile compatibility
+      
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      
+      if (!ctx) {
+        console.warn('Canvas context not available');
+        resolve([]);
+        return;
+      }
       
       const frames: VideoFrame[] = [];
       let frameCount = 0;
-      const frameInterval = 1 / maxFrames; // Extract evenly spaced frames
       
       video.onloadedmetadata = () => {
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d')!;
+        canvas.width = isMobile ? 160 : 320; // Smaller resolution on mobile
+        canvas.height = isMobile ? 120 : 240;
         
-        canvas.width = 192; // Small resolution for mobile
-        canvas.height = 192;
+        const frameInterval = video.duration / mobileOptimizedFrames;
         
         const extractFrame = () => {
-          if (frameCount >= maxFrames || video.currentTime >= video.duration) {
+          if (frameCount >= mobileOptimizedFrames) {
+            video.pause();
             URL.revokeObjectURL(video.src);
+            console.log(`Successfully extracted ${frames.length} frames`);
             resolve(frames);
             return;
           }
           
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          
-          frames.push({
-            data: imageData,
-            timestamp: video.currentTime
-          });
-          
-          frameCount++;
-          video.currentTime = frameCount * frameInterval * video.duration;
+          try {
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            
+            frames.push({
+              data: imageData,
+              timestamp: video.currentTime
+            });
+            
+            frameCount++;
+            video.currentTime = frameCount * frameInterval * video.duration;
+          } catch (error) {
+            console.warn('Frame extraction failed for frame', frameCount, error);
+            frameCount++;
+            if (frameCount < mobileOptimizedFrames) {
+              video.currentTime = frameCount * frameInterval * video.duration;
+            } else {
+              resolve(frames);
+            }
+          }
         };
         
         video.currentTime = 0;
