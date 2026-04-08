@@ -431,30 +431,36 @@ Kurallar:
    * Generate response based on prompt and video analysis
    */
   private generateResponseFromPrompt(prompt: string, analysis: any, duration: number): AutoMagicResult {
-    // Determine vibe based on video analysis
+    // Add random seed for variation
+    const randomSeed = Date.now() + Math.random();
+    
+    // Determine vibe based on video analysis with some randomness
     const vibes = ['Energetic', 'Cinematic', 'Minimalist', 'Cyberpunk'];
     let selectedVibe = analysis.vibe;
     
-    // Map analysis vibe to standard vibes
+    // Map analysis vibe to standard vibes with some randomness
     if (selectedVibe === 'energetic') selectedVibe = 'Energetic';
     else if (selectedVibe === 'cinematic') selectedVibe = 'Cinematic';
     else if (selectedVibe === 'minimalist') selectedVibe = 'Minimalist';
     else if (selectedVibe === 'cyberpunk') selectedVibe = 'Cyberpunk';
-    else selectedVibe = vibes[Math.floor(Math.random() * vibes.length)];
+    else selectedVibe = vibes[Math.floor((randomSeed * 4) % vibes.length)];
 
-    // Generate edit script based on analysis and standard rules
-    const segCount = Math.max(2, Math.min(4, Math.floor(duration / 3)));
+    // Generate edit script with variation
+    const segCount = Math.max(2, Math.min(4, Math.floor(duration / 3) + Math.floor(randomSeed % 2)));
     const segDur = duration / segCount;
     
     const editScript = Array.from({ length: segCount }, (_, i) => {
       const startTime = i * segDur;
       const endTime = (i + 1) * segDur;
       
-      // Vary effects based on video analysis
-      const playbackRate = this.calculatePlaybackRate(analysis.energy, i);
-      const cssFilter = this.calculateCssFilter(analysis.energy, analysis.brightness, i);
-      const frameStyle = this.selectFrameStyle(selectedVibe.toLowerCase(), i);
-      const effect = this.selectEffect(analysis.energy, i);
+      // Add randomness to calculations
+      const randomFactor = 0.8 + ((randomSeed + i) % 10) / 25; // 0.8 to 1.2
+      
+      // Vary effects based on video analysis with randomness
+      const playbackRate = this.calculatePlaybackRate(analysis.energy, i, randomFactor);
+      const cssFilter = this.calculateCssFilter(analysis.energy, analysis.brightness, i, randomFactor);
+      const frameStyle = this.selectFrameStyle(selectedVibe.toLowerCase(), i + Math.floor(randomSeed % 3));
+      const effect = this.selectEffect(analysis.energy, i, randomFactor);
       
       return {
         startTime: parseFloat(startTime.toFixed(2)),
@@ -474,25 +480,27 @@ Kurallar:
   }
 
   /**
-   * Calculate playback rate based on energy and segment
+   * Calculate playback rate based on energy and segment with randomness
    */
-  private calculatePlaybackRate(energy: number, segmentIndex: number): number {
+  private calculatePlaybackRate(energy: number, segmentIndex: number, randomFactor: number = 1): number {
     const baseRate = energy > 0.6 ? 1.2 : 0.9;
     const variation = (segmentIndex % 2) * 0.3; // Alternate between faster/slower
-    return Math.min(2.0, Math.max(0.5, baseRate + variation));
+    const randomVariation = (randomFactor - 1) * 0.5; // Add random variation
+    return Math.min(2.0, Math.max(0.5, baseRate + variation + randomVariation));
   }
 
   /**
-   * Calculate CSS filter based on analysis
+   * Calculate CSS filter based on analysis with randomness
    */
-  private calculateCssFilter(energy: number, brightness: number, segmentIndex: number): string {
-    const contrast = 1.1 + (energy * 0.3);
-    const saturation = 1.1 + (brightness * 0.4);
+  private calculateCssFilter(energy: number, brightness: number, segmentIndex: number, randomFactor: number = 1): string {
+    const contrast = 1.1 + (energy * 0.3) + ((randomFactor - 1) * 0.2);
+    const saturation = 1.1 + (brightness * 0.4) + ((randomFactor - 1) * 0.3);
     
-    // Add some variety based on segment
+    // Add some variety based on segment and randomness
     const extraEffects = segmentIndex % 3 === 0 ? ' brightness(1.1)' : '';
+    const randomExtra = randomFactor > 1.1 ? ' hue-rotate(' + Math.floor((randomFactor * 30) % 60) + 'deg)' : '';
     
-    return `contrast(${contrast.toFixed(1)}) saturate(${saturation.toFixed(1)})${extraEffects}`;
+    return `contrast(${contrast.toFixed(1)}) saturate(${saturation.toFixed(1)})${extraEffects}${randomExtra}`;
   }
   private selectFrameStyle(vibe: string, segmentIndex: number): string {
     const styles = {
@@ -507,13 +515,20 @@ Kurallar:
   }
 
   /**
-   * Select effect based on energy and segment
+   * Select effect based on energy with randomness
    */
-  private selectEffect(energy: number, segmentIndex: number): string {
+  private selectEffect(energy: number, segmentIndex: number, randomFactor: number = 1): string {
     if (energy > 0.7) {
       const effects = ['none', 'confetti', 'stars', 'matrix'];
-      return effects[segmentIndex % effects.length];
+      // Add randomness based on randomFactor
+      const effectIndex = (segmentIndex + Math.floor(randomFactor * 3)) % effects.length;
+      return effects[effectIndex];
     } else {
+      // Sometimes add effects even with lower energy due to randomness
+      if (randomFactor > 1.15 && segmentIndex % 3 === 0) {
+        const effects = ['none', 'snow', 'confetti'];
+        return effects[Math.floor(randomFactor * 2) % effects.length];
+      }
       return 'none';
     }
   }
@@ -563,22 +578,28 @@ Sadece JSON array döndür:`;
   }
 
   /**
-   * Generate script based on prompt and video analysis
+   * Generate script based on prompt and video analysis with randomness
    */
   private generateScriptFromPrompt(prompt: string, analysis: any, targetVibe: string, duration: number): EditSegment[] {
-    // Generate edit script based on analysis and standard rules
-    const segCount = Math.max(2, Math.min(6, Math.floor(duration / 3)));
+    // Add random seed for variation
+    const randomSeed = Date.now() + Math.random();
+    
+    // Generate edit script with variation
+    const segCount = Math.max(2, Math.min(6, Math.floor(duration / 3) + Math.floor(randomSeed % 2)));
     const segDur = duration / segCount;
     
     return Array.from({ length: segCount }, (_, i) => {
       const startTime = i * segDur;
       const endTime = (i + 1) * segDur;
       
-      // Vary effects based on video analysis and target vibe
-      const playbackRate = this.calculatePlaybackRateForVibe(analysis.energy, targetVibe, i);
-      const cssFilter = this.calculateCssFilterForVibe(analysis.energy, analysis.brightness, targetVibe, i);
-      const frameStyle = this.selectFrameStyle(targetVibe.toLowerCase(), i);
-      const effect = this.selectEffectForVibe(analysis.energy, targetVibe, i);
+      // Add randomness to calculations
+      const randomFactor = 0.8 + ((randomSeed + i) % 10) / 25; // 0.8 to 1.2
+      
+      // Vary effects based on video analysis and target vibe with randomness
+      const playbackRate = this.calculatePlaybackRateForVibe(analysis.energy, targetVibe, i, randomFactor);
+      const cssFilter = this.calculateCssFilterForVibe(analysis.energy, analysis.brightness, targetVibe, i, randomFactor);
+      const frameStyle = this.selectFrameStyle(targetVibe.toLowerCase(), i + Math.floor(randomSeed % 3));
+      const effect = this.selectEffectForVibe(analysis.energy, targetVibe, i, randomFactor);
       
       return {
         startTime: parseFloat(startTime.toFixed(2)),
@@ -592,9 +613,9 @@ Sadece JSON array döndür:`;
   }
 
   /**
-   * Calculate playback rate based on energy, vibe, and segment
+   * Calculate playback rate based on energy, vibe, and segment with randomness
    */
-  private calculatePlaybackRateForVibe(energy: number, vibe: string, segmentIndex: number): number {
+  private calculatePlaybackRateForVibe(energy: number, vibe: string, segmentIndex: number, randomFactor: number = 1): number {
     let baseRate = 1.0;
     
     // Adjust base rate based on vibe
@@ -615,15 +636,16 @@ Sadece JSON array döndür:`;
         baseRate = 1.0;
     }
     
-    // Add variation based on segment
+    // Add variation based on segment and randomness
     const variation = (segmentIndex % 2) * 0.2;
-    return Math.min(2.0, Math.max(0.5, baseRate + variation));
+    const randomVariation = (randomFactor - 1) * 0.3;
+    return Math.min(2.0, Math.max(0.5, baseRate + variation + randomVariation));
   }
 
   /**
-   * Calculate CSS filter based on analysis and vibe
+   * Calculate CSS filter based on analysis and vibe with randomness
    */
-  private calculateCssFilterForVibe(energy: number, brightness: number, vibe: string, segmentIndex: number): string {
+  private calculateCssFilterForVibe(energy: number, brightness: number, vibe: string, segmentIndex: number, randomFactor: number = 1): string {
     let contrast = 1.1 + (energy * 0.3);
     let saturation = 1.1 + (brightness * 0.4);
     let extraEffects = '';
@@ -648,13 +670,21 @@ Sadece JSON array döndür:`;
         break;
     }
     
+    // Add randomness
+    contrast += ((randomFactor - 1) * 0.2);
+    saturation += ((randomFactor - 1) * 0.3);
+    
+    if (randomFactor > 1.1) {
+      extraEffects += ' hue-rotate(' + Math.floor((randomFactor * 30) % 45) + 'deg)';
+    }
+    
     return `contrast(${contrast.toFixed(1)}) saturate(${saturation.toFixed(1)})${extraEffects}`;
   }
 
   /**
-   * Select effect based on energy and vibe
+   * Select effect based on energy and vibe with randomness
    */
-  private selectEffectForVibe(energy: number, vibe: string, segmentIndex: number): string {
+  private selectEffectForVibe(energy: number, vibe: string, segmentIndex: number, randomFactor: number = 1): string {
     const energeticEffects = ['none', 'confetti', 'stars', 'matrix'];
     const cinematicEffects = ['none', 'none', 'none', 'snow'];
     const cyberpunkEffects = ['none', 'matrix', 'stars', 'confetti'];
@@ -673,9 +703,15 @@ Sadece JSON array döndür:`;
         break;
     }
     
-    // Only add effects if energy is high enough
-    if (energy > 0.6) {
-      return effects[segmentIndex % effects.length];
+    // Add randomness to effect selection
+    let effectIndex = segmentIndex % effects.length;
+    if (randomFactor > 1.1) {
+      effectIndex = (segmentIndex + Math.floor(randomFactor * 2)) % effects.length;
+    }
+    
+    // Only add effects if energy is high enough or randomness allows it
+    if (energy > 0.6 || (randomFactor > 1.15 && segmentIndex % 3 === 0)) {
+      return effects[effectIndex];
     }
     return 'none';
   }
