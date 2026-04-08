@@ -1011,7 +1011,7 @@ export class VideoAnalysisService {
   }
 
   /**
-   * Generate video edit script
+   * Generate video edit script with transitions based on video analysis
    */
   async generateVideoEditScript(
     videoBlob: Blob,
@@ -1027,6 +1027,10 @@ export class VideoAnalysisService {
     const segCount = Math.max(2, Math.min(6, Math.floor(duration / 3)));
     const segDur = duration / segCount;
     
+    // Detect scene changes for transition points
+    const frames = await this.extractFrames(videoBlob, this.config.maxFrames);
+    const sceneChanges = this.detectSceneChanges(frames);
+    
     return Array.from({ length: segCount }, (_, i) => {
       const startTime = i * segDur;
       const endTime = (i + 1) * segDur;
@@ -1036,15 +1040,59 @@ export class VideoAnalysisService {
       const contrast = 1.1 + (Math.random() * 0.4);
       const saturation = 1.1 + (Math.random() * 0.4);
       
+      // Determine if this segment should have a transition (not the first one)
+      // and if there's a scene change at this point
+      const hasSceneChange = i > 0 && sceneChanges.some(change => {
+        const changeTime = (change / frames.length) * duration;
+        return Math.abs(changeTime - startTime) < segDur * 0.5;
+      });
+      
+      // Select transition based on vibe and scene changes
+      const transition = i === 0 ? 'none' : this.selectTransition(targetVibe, hasSceneChange, analysis.energy);
+      
       return {
         startTime: parseFloat(startTime.toFixed(2)),
         endTime: parseFloat(endTime.toFixed(2)),
         playbackRate,
         cssFilter: `contrast(${contrast.toFixed(1)}) saturate(${saturation.toFixed(1)})`,
         frameStyle: this.selectFrameStyle(targetVibe, i),
-        effect: this.selectEffect(analysis.energy, i)
+        effect: this.selectEffect(analysis.energy, i),
+        transition,
+        transitionDuration: transition === 'none' ? 0 : 0.5
       };
     });
+  }
+
+  /**
+   * Select transition type based on vibe, scene changes, and energy
+   */
+  private selectTransition(vibe: string, hasSceneChange: boolean, energy: number): EditSegment['transition'] {
+    const transitions: EditSegment['transition'][] = ['fade', 'slide', 'zoom', 'glitch', 'wipe', 'dissolve'];
+    
+    // Scene changes get more dramatic transitions
+    if (hasSceneChange) {
+      if (vibe === 'energetic' || vibe === 'cyberpunk') {
+        return energy > 0.7 ? 'glitch' : 'zoom';
+      } else if (vibe === 'cinematic') {
+        return 'dissolve';
+      } else {
+        return 'wipe';
+      }
+    }
+    
+    // No scene change - use subtle transitions
+    if (vibe === 'minimalist') {
+      return 'fade';
+    } else if (vibe === 'energetic') {
+      return energy > 0.6 ? 'slide' : 'zoom';
+    } else if (vibe === 'cinematic') {
+      return 'dissolve';
+    } else if (vibe === 'cyberpunk') {
+      return 'glitch';
+    }
+    
+    // Default fallback
+    return transitions[Math.floor(Math.random() * transitions.length)];
   }
 
   /**

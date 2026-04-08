@@ -540,7 +540,11 @@ JSON formatında yanıt ver:
 
       "frameStyle": "cinematic",
 
-      "effect": "none"
+      "effect": "none",
+
+      "transition": "none",
+
+      "transitionDuration": 0
 
     },
 
@@ -556,7 +560,11 @@ JSON formatında yanıt ver:
 
       "frameStyle": "neon",
 
-      "effect": "none"
+      "effect": "none",
+
+      "transition": "fade",
+
+      "transitionDuration": 0.5
 
     }
 
@@ -579,6 +587,10 @@ Kurallar:
 - frameStyle: "none"|"cinematic"|"polaroid"|"neon"|"vintage"|"glitch"|"minimal"|"bold"|"tv"|"comic"|"glam"|"newspaper"
 
 - effect: "none"|"snow"|"confetti"|"balloons"|"rain"|"hearts"|"stars"|"matrix"
+
+- transition: "none"|"fade"|"slide"|"zoom"|"glitch"|"wipe"|"dissolve" (ilk segment "none")
+
+- transitionDuration: 0.3-0.8 saniye
 
 - texts: her zaman boş ([])`;
 
@@ -624,11 +636,15 @@ Kurallar:
 
 JSON: {"vibe":"Energetic","editScript":[],"texts":[]}
 
-Create 2-4 segments with: startTime, endTime, playbackRate(0.5-2.0), cssFilter, frameStyle, effect.
+Create 2-4 segments with: startTime, endTime, playbackRate(0.5-2.0), cssFilter, frameStyle, effect, transition, transitionDuration.
 
 frameStyle: cinematic|neon|vintage|glitch|minimal|bold
 
-effect: none|snow|confetti|rain|stars`;
+effect: none|snow|confetti|rain|stars
+
+transition: none|fade|slide|zoom|glitch|wipe|dissolve (first segment always "none")
+
+transitionDuration: 0.3-0.8 seconds`;
 
 
 
@@ -640,7 +656,7 @@ effect: none|snow|confetti|rain|stars`;
 
       console.error('Gemma4 Browser AutoMagic generation failed:', error);
 
-      // Fallback response
+      // Fallback response with transitions
 
       return {
 
@@ -658,7 +674,11 @@ effect: none|snow|confetti|rain|stars`;
 
           frameStyle: 'cinematic',
 
-          effect: 'none'
+          effect: 'none',
+
+          transition: 'none' as const,
+
+          transitionDuration: 0
 
         }],
 
@@ -710,19 +730,27 @@ effect: none|snow|confetti|rain|stars`;
 
       effect: 'none',
 
+      transition: i === 0 ? 'none' : 'fade',
+
+      transitionDuration: i === 0 ? 0 : 0.5,
+
     }));
 
 
 
     const prompt = `${duration.toFixed(1)}s video edit script for "${vibe}" vibe.
 
-JSON array with segments: startTime, endTime, playbackRate(0.5-2.0), cssFilter, frameStyle, effect.
+JSON array with segments: startTime, endTime, playbackRate(0.5-2.0), cssFilter, frameStyle, effect, transition, transitionDuration.
 
 frameStyle: cinematic|neon|vintage|glitch|minimal|bold
 
 effect: none|snow|confetti|rain|stars
 
-Use different styles per segment for dynamic flow.`;
+transition: none|fade|slide|zoom|glitch|wipe|dissolve (first segment always "none")
+
+transitionDuration: 0.3-0.8 seconds
+
+Use different styles and transitions per segment for dynamic flow.`;
 
 
 
@@ -734,9 +762,17 @@ Use different styles per segment for dynamic flow.`;
 
       console.error('Gemma4 Browser script generation failed:', error);
 
-      // Fallback response
+      // Fallback response with proper types
 
-      return exampleSegments;
+      return exampleSegments.map(s => ({
+
+        ...s,
+
+        transition: (s.transition || 'none') as EditSegment['transition'],
+
+        transitionDuration: s.transitionDuration || 0
+
+      }));
 
     }
 

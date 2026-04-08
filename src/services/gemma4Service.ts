@@ -147,7 +147,9 @@ Aşağıdaki JSON formatında yanıt ver. Başka hiçbir şey yazma, sadece JSON
       "playbackRate": 1.0,
       "cssFilter": "contrast(1.2) saturate(1.3)",
       "frameStyle": "cinematic",
-      "effect": "none"
+      "effect": "none",
+      "transition": "none",
+      "transitionDuration": 0
     },
     {
       "startTime": ${Math.floor(duration / 2)},
@@ -155,7 +157,9 @@ Aşağıdaki JSON formatında yanıt ver. Başka hiçbir şey yazma, sadece JSON
       "playbackRate": 1.5,
       "cssFilter": "contrast(1.4) saturate(1.5)",
       "frameStyle": "neon",
-      "effect": "none"
+      "effect": "none",
+      "transition": "fade",
+      "transitionDuration": 0.5
     }
   ],
   "texts": []
@@ -167,9 +171,17 @@ Kurallar:
 - cssFilter: geçerli CSS filter string
 - frameStyle: "none" | "cinematic" | "polaroid" | "neon" | "vintage" | "glitch" | "minimal" | "bold" | "tv" | "comic" | "glam" | "newspaper"
 - effect: "none" | "snow" | "confetti" | "balloons" | "rain" | "hearts" | "stars" | "matrix"
+- transition: "none" | "fade" | "slide" | "zoom" | "glitch" | "wipe" | "dissolve"
+- transitionDuration: 0.3-0.8 saniye (varsayılan 0.5)
 - startTime ve endTime 0 ile ${duration.toFixed(1)} arasında olmalı. Segmentler ardışık ve videoyu tamamen kapsamalı.
+- İlk segment transition: "none" olmalı.
+- Geçiş türleri için:
+  * Energetic: "slide", "zoom", "glitch"
+  * Cinematic: "dissolve", "fade"
+  * Minimalist: "fade", "wipe"
+  * Cyberpunk: "glitch", "zoom"
 - texts: Bu listeyi her zaman boş ([]) bırak.
-- Önemli: Sahnelere göre farklı frameStyle ve effect kullanarak videoyu canlandır.
+- Önemli: Sahnelere göre farklı frameStyle, effect ve transition kullanarak videoyu canlandır.
 
 Şimdi bu video için en iyi edit script'i oluştur:`;
 
@@ -212,6 +224,8 @@ Kurallar:
       cssFilter: 'contrast(1.2) saturate(1.3)',
       frameStyle: 'cinematic',
       effect: 'none',
+      transition: i === 0 ? 'none' : 'fade',
+      transitionDuration: i === 0 ? 0 : 0.5,
     }));
 
     const prompt = `Sen profesyonel bir video editörüsün. "${vibe}" vibe için ${duration.toFixed(1)} saniyelik video edit script oluştur.
@@ -224,8 +238,16 @@ Bu format örneğini kullanarak "${vibe}" vibe'ına uygun gerçek değerler üre
 - cssFilter: geçerli CSS filter (örn: "contrast(1.3) saturate(1.5) brightness(1.1)")
 - frameStyle: "none"|"cinematic"|"polaroid"|"neon"|"vintage"|"glitch"|"minimal"|"bold"|"tv"|"comic"|"glam"|"newspaper"
 - effect: "none"|"snow"|"confetti"|"balloons"|"rain"|"hearts"|"stars"|"matrix"
+- transition: "none"|"fade"|"slide"|"zoom"|"glitch"|"wipe"|"dissolve"
+- transitionDuration: 0.3-0.8 saniye
 - startTime/endTime: 0 ile ${duration.toFixed(1)} arasında, ardışık olmalı.
-- Önemli: Farklı segmentlerde farklı çerçeveler ve efektler kullanarak etkileyici bir akış sağla.
+- İlk segment transition: "none" olmalı.
+- Vibe'a göre geçiş seçimi:
+  * Energetic: "slide", "zoom", "glitch"
+  * Cinematic: "dissolve", "fade"
+  * Minimalist: "fade", "wipe"
+  * Cyberpunk: "glitch", "zoom"
+- Önemli: Farklı segmentlerde farklı çerçeveler, efektler ve geçişler kullanarak etkileyici bir akış sağla.
 
 Sadece JSON array döndür:`;
 
@@ -233,8 +255,12 @@ Sadece JSON array döndür:`;
       return await this.generateJson<EditSegment[]>(prompt);
     } catch (error) {
       console.error('Gemma4 script generation failed:', error);
-      // Fallback response
-      return exampleSegments;
+      // Fallback response with proper types
+      return exampleSegments.map(s => ({
+        ...s,
+        transition: (s.transition || 'none') as EditSegment['transition'],
+        transitionDuration: s.transitionDuration || 0
+      }));
     }
   }
 

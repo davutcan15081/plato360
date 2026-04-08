@@ -13,6 +13,8 @@ export interface EditSegment {
   cssFilter: string;
   frameStyle: string;
   effect?: string;
+  transition?: 'none' | 'fade' | 'slide' | 'zoom' | 'glitch' | 'wipe' | 'dissolve';
+  transitionDuration?: number; // seconds, default 0.5
 }
 
 export interface AutoMagicResult {
@@ -343,7 +345,22 @@ async function generateAutoMagicEditGemini(
   const apiKey = await getRotatedGeminiKey();
   const ai = new GoogleGenAI({ apiKey });
 
-  const prompt = `Expert video editor...`; // Prompt aynı
+  const prompt = `You are an expert video editor. Analyze this ${duration.toFixed(1)}s video and create an engaging edit with smooth transitions between segments.
+
+Create 2-4 segments with varied playback rates, filters, frame styles, and effects.
+
+For EACH segment (except the first), add a transition effect:
+- transition: "none" | "fade" | "slide" | "zoom" | "glitch" | "wipe" | "dissolve"
+- transitionDuration: 0.3-0.8 seconds (default 0.5)
+
+Transition recommendations by vibe:
+- Energetic: "slide", "zoom", "glitch" for high energy
+- Cinematic: "dissolve", "fade" for smooth professional look
+- Minimalist: "fade", "wipe" for clean transitions
+- Cyberpunk: "glitch", "zoom" for tech aesthetic
+
+First segment should always have transition: "none".
+Match transitions to scene changes when possible.`;
 
   const contents: any[] = [{ inlineData: { data: base64Video.split(',')[1], mimeType } }];
   if (audioBlob) {
@@ -369,6 +386,8 @@ async function generateAutoMagicEditGemini(
                 startTime: { type: Type.NUMBER }, endTime: { type: Type.NUMBER },
                 playbackRate: { type: Type.NUMBER }, cssFilter: { type: Type.STRING },
                 frameStyle: { type: Type.STRING }, effect: { type: Type.STRING },
+                transition: { type: Type.STRING },
+                transitionDuration: { type: Type.NUMBER },
               },
               required: ['startTime', 'endTime', 'playbackRate', 'cssFilter', 'frameStyle'],
             },
@@ -411,7 +430,20 @@ async function generateVideoEditScriptGemini(
   const apiKey = await getRotatedGeminiKey();
   const ai = new GoogleGenAI({ apiKey });
 
-  const prompt = `Expert video editor...`; // Prompt aynı
+  const prompt = `You are an expert video editor. Create an edit script for a ${duration.toFixed(1)}s video with "${vibe}" vibe.
+
+Create 2-4 segments. For EACH segment (except the first), add a transition effect:
+- transition: "none" | "fade" | "slide" | "zoom" | "glitch" | "wipe" | "dissolve"
+- transitionDuration: 0.3-0.8 seconds
+
+First segment: transition must be "none".
+Other segments: choose based on vibe:
+- Energetic: "slide", "zoom", "glitch"
+- Cinematic: "dissolve", "fade"
+- Minimalist: "fade", "wipe"
+- Cyberpunk: "glitch", "zoom"
+
+Vary frameStyle and effects per segment for dynamic flow.`;
 
   const contents: any[] = [{ inlineData: { data: base64Video.split(',')[1], mimeType } }];
   if (audioBlob) {
@@ -433,6 +465,8 @@ async function generateVideoEditScriptGemini(
             startTime: { type: Type.NUMBER }, endTime: { type: Type.NUMBER },
             playbackRate: { type: Type.NUMBER }, cssFilter: { type: Type.STRING },
             frameStyle: { type: Type.STRING }, effect: { type: Type.STRING },
+            transition: { type: Type.STRING },
+            transitionDuration: { type: Type.NUMBER },
           },
           required: ['startTime', 'endTime', 'playbackRate', 'cssFilter', 'frameStyle'],
         },
@@ -465,7 +499,9 @@ Aşağıdaki JSON formatında yanıt ver. Başka hiçbir şey yazma, sadece JSON
       "playbackRate": 1.0,
       "cssFilter": "contrast(1.2) saturate(1.3)",
       "frameStyle": "cinematic",
-      "effect": "none"
+      "effect": "none",
+      "transition": "none",
+      "transitionDuration": 0
     },
     {
       "startTime": ${Math.floor(duration / 2)},
@@ -473,7 +509,9 @@ Aşağıdaki JSON formatında yanıt ver. Başka hiçbir şey yazma, sadece JSON
       "playbackRate": 1.5,
       "cssFilter": "contrast(1.4) saturate(1.5)",
       "frameStyle": "neon",
-      "effect": "none"
+      "effect": "none",
+      "transition": "fade",
+      "transitionDuration": 0.5
     }
   ],
   "texts": []
@@ -485,9 +523,17 @@ Kurallar:
 - cssFilter: geçerli CSS filter string
 - frameStyle: "none" | "cinematic" | "polaroid" | "neon" | "vintage" | "glitch" | "minimal" | "bold" | "tv" | "comic" | "glam" | "newspaper"
 - effect: "none" | "snow" | "confetti" | "balloons" | "rain" | "hearts" | "stars" | "matrix"
+- transition: "none" | "fade" | "slide" | "zoom" | "glitch" | "wipe" | "dissolve"
+- transitionDuration: 0.3-0.8 saniye (varsayılan 0.5)
 - startTime ve endTime 0 ile ${duration.toFixed(1)} arasında olmalı. Segmentler ardışık ve videoyu tamamen kapsamalı.
+- İlk segment transition: "none" olmalı.
+- Geçiş türleri için:
+  * Energetic: "slide", "zoom", "glitch"
+  * Cinematic: "dissolve", "fade"
+  * Minimalist: "fade", "wipe"
+  * Cyberpunk: "glitch", "zoom"
 - texts: Bu listeyi her zaman boş ([]) bırak.
-- Önemli: Sahnelere göre farklı frameStyle ve effect kullanarak videoyu canlandır.
+- Önemli: Sahnelere göre farklı frameStyle, effect ve transition kullanarak videoyu canlandır.
 
 Şimdi bu video için en iyi edit script'i oluştur:`;
 
@@ -534,6 +580,8 @@ async function generateVideoEditScriptAnythingLLM(
     cssFilter: 'contrast(1.2) saturate(1.3)',
     frameStyle: 'cinematic',
     effect: 'none',
+    transition: i === 0 ? 'none' : 'fade',
+    transitionDuration: i === 0 ? 0 : 0.5,
   }));
 
   const prompt = `Sen profesyonel bir video editörüsün. "${vibe}" vibe için ${duration.toFixed(1)} saniyelik video edit script oluştur.
@@ -546,8 +594,16 @@ Bu format örneğini kullanarak "${vibe}" vibe'ına uygun gerçek değerler üre
 - cssFilter: geçerli CSS filter (örn: "contrast(1.3) saturate(1.5) brightness(1.1)")
 - frameStyle: "none"|"cinematic"|"polaroid"|"neon"|"vintage"|"glitch"|"minimal"|"bold"|"tv"|"comic"|"glam"|"newspaper"
 - effect: "none"|"snow"|"confetti"|"balloons"|"rain"|"hearts"|"stars"|"matrix"
+- transition: "none"|"fade"|"slide"|"zoom"|"glitch"|"wipe"|"dissolve"
+- transitionDuration: 0.3-0.8 saniye
 - startTime/endTime: 0 ile ${duration.toFixed(1)} arasında, ardışık olmalı.
-- Önemli: Farklı segmentlerde farklı çerçeveler ve efektler kullanarak etkileyici bir akış sağla.
+- İlk segment transition: "none" olmalı.
+- Vibe'a göre geçiş seçimi:
+  * Energetic: "slide", "zoom", "glitch"
+  * Cinematic: "dissolve", "fade"
+  * Minimalist: "fade", "wipe"
+  * Cyberpunk: "glitch", "zoom"
+- Önemli: Farklı segmentlerde farklı çerçeveler, efektler ve geçişler kullanarak etkileyici bir akış sağla.
 
 Sadece JSON array döndür:`;
 
