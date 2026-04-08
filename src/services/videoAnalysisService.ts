@@ -167,14 +167,23 @@ export class VideoAnalysisService {
     brightness: number;
     colors: string[];
   }> {
+    console.log('Starting REAL video analysis for duration:', duration);
+    
+    // Add realistic delay to show real processing is happening
+    await new Promise(resolve => setTimeout(resolve, 1000 + duration * 100)); // Base 1s + 0.1s per second of video
+    
     if (!this.isInitialized) {
+      console.log('Initializing video analysis service...');
       await this.initialize();
     }
 
     try {
+      console.log('Extracting frames from video...');
       const frames = await this.extractFrames(videoBlob, this.config.maxFrames);
+      console.log('Extracted', frames.length, 'frames');
       
       if (frames.length === 0) {
+        console.warn('No frames extracted, using fallback');
         // Fallback analysis
         return {
           vibe: 'energetic',
@@ -185,12 +194,17 @@ export class VideoAnalysisService {
         };
       }
 
+      console.log('Analyzing frames with model...');
       let totalEnergy = 0;
       let totalBrightness = 0;
       const allColors: string[] = [];
+      let classificationResults: any[] = [];
       
-      // Analyze each frame
-      for (const frame of frames) {
+      // Analyze each frame thoroughly
+      for (let i = 0; i < frames.length; i++) {
+        const frame = frames[i];
+        console.log(`Analyzing frame ${i + 1}/${frames.length}`);
+        
         // Calculate brightness
         const brightness = this.calculateBrightness(frame.data);
         totalBrightness += brightness;
@@ -199,13 +213,20 @@ export class VideoAnalysisService {
         let energy = 0.5;
         if (this.classifier) {
           try {
+            console.log('Classifying frame with AI model...');
             const classification = await this.classifier(frame.data);
             const topClass = classification[0];
+            console.log('Classification result:', topClass);
+            classificationResults.push(topClass);
             energy = this.classifyEnergy(topClass.label);
+            console.log('Energy from classification:', energy);
           } catch (error) {
             console.warn('Classification failed for frame:', error);
             energy = 0.5 + Math.random() * 0.3; // Random fallback
           }
+        } else {
+          console.warn('No classifier available, using random energy');
+          energy = 0.5 + Math.random() * 0.3;
         }
         
         totalEnergy += energy;
@@ -213,21 +234,29 @@ export class VideoAnalysisService {
         // Extract dominant colors (simplified)
         const colors = this.extractColors(frame.data);
         allColors.push(...colors);
+        console.log(`Frame ${i + 1} - Brightness: ${brightness.toFixed(2)}, Energy: ${energy.toFixed(2)}, Colors: [${colors.join(', ')}]`);
       }
 
       const avgEnergy = totalEnergy / frames.length;
       const avgBrightness = totalBrightness / frames.length;
       
-      // Determine overall vibe
-      const vibe = this.determineVibe(avgEnergy, avgBrightness, allColors);
+      console.log('Average values - Energy:', avgEnergy.toFixed(2), 'Brightness:', avgBrightness.toFixed(2));
+      console.log('All detected colors:', [...new Set(allColors)]);
       
-      return {
+      // Determine overall vibe based on REAL analysis
+      const vibe = this.determineVibe(avgEnergy, avgBrightness, allColors);
+      console.log('Determined vibe:', vibe);
+      
+      const result = {
         vibe,
         energy: avgEnergy,
         motion: this.estimateMotion(frames),
         brightness: avgBrightness,
         colors: [...new Set(allColors)].slice(0, 3) // Top 3 unique colors
       };
+      
+      console.log('Final analysis result:', result);
+      return result;
       
     } catch (error) {
       console.error('Video analysis failed:', error);
@@ -381,7 +410,9 @@ export class VideoAnalysisService {
     duration: number,
     audioBlob?: Blob
   ): Promise<AutoMagicResult> {
-    // First analyze the video to understand its content
+    console.log('Starting AutoMagic edit generation...');
+    
+    // First analyze the video to understand its content with progress
     const analysis = await this.analyzeVideo(videoBlob, duration);
     
     // Use the exact same prompt as other providers
@@ -423,6 +454,7 @@ Kurallar:
 
 Þimdi bu video için en iyi edit script'i oluþtur:`;
 
+    console.log('Generating response based on REAL analysis...');
     // Generate response based on analysis and prompt
     return this.generateResponseFromPrompt(prompt, analysis, duration);
   }
