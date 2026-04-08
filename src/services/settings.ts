@@ -2,21 +2,27 @@
 import { Preferences } from '@capacitor/preferences';
 
 export interface AppSettings {
-  geminiApiKey: string;
+  geminiApiKeys: string[];
+  lastGeminiKeyIndex: number;
   anythingllmUrl: string;
   anythingllmApiKey: string;
   anythingllmWorkspace: string;
-  aiProvider: 'gemini' | 'mock' | 'anythingllm';
+  aiProvider: 'gemini' | 'mock' | 'anythingllm' | 'gemma4';
+  gemma4BaseUrl: string;
+  gemma4Model: 'gemma4:e4b' | 'gemma4:26b-a4b' | 'gemma4:e2b' | 'gemma4:31b';
 }
 
 const SETTINGS_KEY = 'app_settings';
 
 export const defaultSettings: AppSettings = {
-  geminiApiKey: '',
+  geminiApiKeys: [],
+  lastGeminiKeyIndex: 0,
   anythingllmUrl: '',
   anythingllmApiKey: '',
   anythingllmWorkspace: '',
-  aiProvider: 'gemini'
+  aiProvider: 'gemini',
+  gemma4BaseUrl: 'http://localhost:11434',
+  gemma4Model: 'gemma4:e4b'
 }
 
 import { Capacitor } from '@capacitor/core';
@@ -27,7 +33,7 @@ export function normalizeAnythingLLMUrl(url: string): string {
   let normalized = url.trim()
     .replace(/\.+$/, '')  // Remove trailing dots (e.g., 192.168.1.186..)
     .replace(/\/+$/, ''); // Remove trailing slashes
-  
+
   // Android emülatör için localhost -> 10.0.2.2 dönüşümü
   if (Capacitor.getPlatform() === 'android' && (normalized.includes('localhost') || normalized.includes('127.0.0.1'))) {
     normalized = normalized.replace('localhost', '10.0.2.2').replace('127.0.0.1', '10.0.2.2');
@@ -50,7 +56,7 @@ export async function getSettings(): Promise<AppSettings> {
     const { value } = await Preferences.get({ key: SETTINGS_KEY });
     if (value) {
       const settings = JSON.parse(value);
-    return { ...defaultSettings, ...settings };
+      return { ...defaultSettings, ...settings };
     }
     return defaultSettings;
   } catch (error) {
@@ -62,7 +68,7 @@ export async function getSettings(): Promise<AppSettings> {
 export async function saveSettings(settings: Partial<AppSettings>): Promise<void> {
   try {
     const currentSettings = await getSettings();
-    
+
     const newSettings = { ...currentSettings, ...settings };
     await Preferences.set({
       key: SETTINGS_KEY,

@@ -4,6 +4,8 @@ import { ArrowLeft, Settings as SettingsIcon, Save, RotateCcw, Check, X, Key, Br
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { getSettings, saveSettings, resetSettings, AppSettings } from '../services/settings';
 import { testAnythingLLMConnection, fetchWorkspaces, ConnectionTestResult, isMobile, platform } from '../utils/testConnection';
+import { quickGemma4Test } from '../utils/testGemma4';
+import { testBrowserCompatibility } from '../services/gemma4BrowserService';
 import { HelpCircle, Smartphone, Monitor, Info, List, RefreshCw } from 'lucide-react';
 
 interface SettingsProps {
@@ -12,11 +14,14 @@ interface SettingsProps {
 
 export function Settings({ onBack }: SettingsProps) {
   const [settings, setSettings] = useState<AppSettings>({
-    geminiApiKey: '',
+    geminiApiKeys: ['', '', ''],
+    lastGeminiKeyIndex: 0,
     anythingllmUrl: '',
     anythingllmApiKey: '',
     anythingllmWorkspace: '',
-    aiProvider: 'gemini'
+    aiProvider: 'gemini',
+    gemma4BaseUrl: 'http://localhost:11434',
+    gemma4Model: 'gemma4:e4b'
   });
   const [hasChanges, setHasChanges] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -150,6 +155,38 @@ export function Settings({ onBack }: SettingsProps) {
     }
   };
 
+  const handleTestGemma4 = async () => {
+    setIsTesting(true);
+    setTestResult(null);
+    try {
+      const compatibility = testBrowserCompatibility();
+      
+      const message = compatibility.recommended 
+        ? 'Tarayıcı uyumlu! Gemma4 doğrudan telefonda çalışabilir.' 
+        : `Tarayıcı kısıtlamaları:\n${!compatibility.webgpu ? '• WebGPU desteklenmiyor (daha yavaş)\n' : ''}${!compatibility.wasm ? '• WASM desteklenmiyor (gerekli)\n' : ''}${!compatibility.webgl ? '• WebGL desteklenmiyor\n' : ''}${!compatibility.workers ? '• Web Workers desteklenmiyor\n' : ''}${!compatibility.indexedDB ? '• IndexedDB desteklenmiyor\n' : ''}Model yine de çalışabilir ama daha yavaş olabilir.`;
+
+      setTestResult({
+        success: compatibility.recommended,
+        message,
+        provider: 'gemma4',
+        timestamp: new Date()
+      });
+      
+      if (compatibility.recommended) {
+        try { await Haptics.impact({ style: ImpactStyle.Medium }); } catch (e) {}
+      }
+    } catch (error) {
+      setTestResult({
+        success: false,
+        message: 'Tarayıcı uyumluluğu testi başarısız oldu.',
+        provider: 'gemma4',
+        timestamp: new Date()
+      });
+    } finally {
+      setIsTesting(false);
+    }
+  };
+
 
   return (
     <div className="w-full h-[100dvh] bg-zinc-950 text-zinc-50 overflow-hidden font-sans">
@@ -236,6 +273,17 @@ export function Settings({ onBack }: SettingsProps) {
                 <div className="text-[10px] mt-0.5 opacity-70">Google</div>
               </button>
               <button
+                onClick={() => handleSettingChange('aiProvider', 'gemma4')}
+                className={`p-3 rounded-xl border text-left transition-all ${
+                  settings.aiProvider === 'gemma4'
+                    ? 'border-purple-500 bg-purple-500/10 text-purple-300'
+                    : 'border-zinc-800 bg-zinc-900/50 text-zinc-400 hover:bg-zinc-800'
+                }`}
+              >
+                <div className="font-semibold text-sm">Gemma4</div>
+                <div className="text-[10px] mt-0.5 opacity-70">Google Açık</div>
+              </button>
+              <button
                 onClick={() => handleSettingChange('aiProvider', 'anythingllm')}
                 className={`p-4 rounded-xl border text-left transition-all relative overflow-hidden ${
                   settings.aiProvider === 'anythingllm'
@@ -264,6 +312,7 @@ export function Settings({ onBack }: SettingsProps) {
           </div>
 
           {/* Provider Specific Settings */}
+
           {settings.aiProvider === 'mock' && (
             <div className="space-y-4">
               <h2 className="text-lg font-semibold flex items-center gap-2">
@@ -282,17 +331,93 @@ export function Settings({ onBack }: SettingsProps) {
             <div className="space-y-4">
               <h2 className="text-lg font-semibold flex items-center gap-2">
                 <Key size={18} className="text-yellow-400" />
-                Gemini API Ayarları
+                Gemini API Ayarları (Rotasyon)
               </h2>
+              <div className="p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-xl text-[11px] text-yellow-300">
+                Birden fazla anahtar girerek ücretsiz sürümdeki limitleri esnetebilirsiniz. Her istekte bir sonraki anahtar kullanılır.
+              </div>
               <div className="space-y-3">
-                <label className="text-sm font-medium text-zinc-400 block">API Anahtarı</label>
-                <input
-                  type="password"
-                  value={settings.geminiApiKey}
-                  onChange={(e) => handleSettingChange('geminiApiKey', e.target.value)}
-                  placeholder="AIza..."
-                  className="w-full px-4 py-3 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-500 focus:border-indigo-500 focus:outline-none transition-colors"
-                />
+                {[0, 1, 2].map((idx) => (
+                  <div key={idx}>
+                    <label className="text-[10px] font-medium text-zinc-500 block mb-1">API Anahtarı {idx + 1}</label>
+                    <input
+                      type="password"
+                      value={settings.geminiApiKeys[idx] || ''}
+                      onChange={(e) => {
+                        const newKeys = [...settings.geminiApiKeys];
+                        newKeys[idx] = e.target.value;
+                        setSettings(prev => ({ ...prev, geminiApiKeys: newKeys }));
+                        setHasChanges(true);
+                      }}
+                      placeholder="AIza..."
+                      className="w-full px-4 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder-zinc-500 focus:border-indigo-500 focus:outline-none transition-colors text-sm"
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {settings.aiProvider === 'gemma4' && (
+            <div className="space-y-4">
+              <h2 className="text-lg font-semibold flex items-center gap-2">
+                <Brain size={18} className="text-purple-400" />
+                Gemma4 Ayarları (Lokal)
+              </h2>
+              <div className="p-3 bg-purple-500/10 border border-purple-500/20 rounded-xl text-[11px] text-purple-300">
+                Google'un yeni açık kaynak modeli. Videoyu analiz eder, içeriğe göre düzenleme önerir. Tamamen yerel çalışır.
+              </div>
+              <div className="space-y-4">
+                <div>
+                  <label className="text-sm font-medium text-zinc-400 mb-2 block">Model</label>
+                  <select
+                    value={settings.gemma4Model}
+                    onChange={(e) => handleSettingChange('gemma4Model', e.target.value)}
+                    className="w-full px-4 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-100 focus:border-purple-500 focus:outline-none transition-colors text-sm"
+                  >
+                    <option value="gemma4:e2b">Gemma4 E2B (2B) - Hafif & Hızlı</option>
+                    <option value="gemma4:e4b">Gemma4 E4B (4B) - Dengeli</option>
+                  </select>
+                  <p className="text-[10px] text-zinc-500 mt-1">
+                    E2B modeli daha hızlı, E4B modeli daha kaliteli. Her ikisi de telefonda çalışır.
+                  </p>
+                </div>
+                <div className="p-4 bg-zinc-900/50 border border-zinc-800 rounded-xl text-xs space-y-2">
+                  <h4 className="font-semibold text-zinc-300 flex items-center gap-2">
+                    <Info size={12} /> Lokal AI Avantajları
+                  </h4>
+                  <div className="space-y-1 text-zinc-400">
+                    <p>✅ İnternet gerekmez</p>
+                    <p>✅ Verileriniz telefonda kalır</p>
+                    <p>✅ Hiçbir sunucuya bağlı değilsiniz</p>
+                    <p>✅ Tamamen ücretsiz</p>
+                    <p>✅ Google kalitesi</p>
+                  </div>
+                </div>
+                <div className="p-4 bg-zinc-900/50 border border-zinc-800 rounded-xl text-xs space-y-2">
+                  <h4 className="font-semibold text-zinc-300 flex items-center gap-2">
+                    <Smartphone size={12} /> Teknik Bilgiler
+                  </h4>
+                  <div className="space-y-1 text-zinc-400">
+                    <p>• Model ilk kullanımda indirilir (~500MB)</p>
+                    <p>• Videoyu analiz eder: sahneler, nesneler, eylemler</p>
+                    <p>• WebGPU destekli telefonlarda daha hızlı</p>
+                    <p>• Eski telefonlarda da çalışır (daha yavaş)</p>
+                    <p>• Video düzenleme için optimize edilmiş</p>
+                  </div>
+                </div>
+                <button
+                  onClick={handleTestGemma4}
+                  disabled={isTesting}
+                  className="w-full py-3 rounded-xl bg-zinc-800 border border-zinc-700 text-zinc-100 font-medium flex items-center justify-center gap-2 hover:bg-zinc-700 transition-colors active:scale-95 disabled:opacity-50"
+                >
+                  {isTesting ? (
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  ) : (
+                    <Brain size={16} />
+                  )}
+                  Tarayıcı Uyumluluğunu Test Et
+                </button>
               </div>
             </div>
           )}

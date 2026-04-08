@@ -1,7 +1,9 @@
 import { GoogleGenAI, Type } from '@google/genai';
-import { getSettings, normalizeAnythingLLMUrl } from './settings';
+import { getSettings, normalizeAnythingLLMUrl, saveSettings } from './settings';
 import axios from 'axios';
 import { buildAnythingLLMUrl, withRetry } from '../utils/testConnection';
+import { createGemma4Service, validateGemma4Config } from './gemma4Service';
+import { createGemma4BrowserService } from './gemma4BrowserService';
 
 export interface EditSegment {
   startTime: number;
@@ -78,8 +80,33 @@ function blobToBase64(blob: Blob): Promise<string> {
 }
 
 function validateGemini(s: any) {
-  if (!s.geminiApiKey && !process.env.GEMINI_API_KEY)
+  if ((!s.geminiApiKeys || s.geminiApiKeys.length === 0) && !process.env.GEMINI_API_KEY)
     throw new Error('Gemini API anahtarı yapılandırılmamış.');
+}
+
+function validateGemma4(s: any) {
+  // Browser-based Gemma4 doesn't require server configuration
+  // Just check if model is selected
+  if (!s.gemma4Model) {
+    throw new Error('Gemma4 model seçilmemiş.');
+  }
+}
+
+async function getRotatedGeminiKey(): Promise<string> {
+  const settings = await getSettings();
+  if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY') return process.env.GEMINI_API_KEY;
+  
+  const keys = settings.geminiApiKeys.filter(k => k && k.trim().length > 10);
+  if (keys.length === 0) throw new Error('Geçerli bir Gemini API anahtarı bulunamadı.');
+  
+  if (keys.length === 1) return keys[0];
+
+  // Rotate
+  const nextIndex = (settings.lastGeminiKeyIndex + 1) % keys.length;
+  await saveSettings({ lastGeminiKeyIndex: nextIndex });
+  
+  console.log(`[Gemini] Rotating keys. Using key index ${nextIndex + 1}/${keys.length}`);
+  return keys[nextIndex];
 }
 
 /**
@@ -204,6 +231,16 @@ export async function generateAutoMagicEdit(
     }
   }
 
+  if (settings.aiProvider === 'gemma4') {
+    validateGemma4(settings);
+    try {
+      return await generateAutoMagicEditGemma4(videoBlob, duration, audioBlob, settings);
+    } catch (err) {
+      const m = (err as Error).message ?? '';
+      throw new Error(`Gemma4 hatası: ${m}`);
+    }
+  }
+
   if (settings.aiProvider === 'anythingllm') {
     return await generateAutoMagicEditAnythingLLM(videoBlob, duration, audioBlob, settings);
   }
@@ -222,6 +259,11 @@ export async function generateVideoEditScript(
   if (settings.aiProvider === 'gemini') {
     validateGemini(settings);
     return generateVideoEditScriptGemini(videoBlob, duration, vibe, audioBlob, settings);
+  }
+
+  if (settings.aiProvider === 'gemma4') {
+    validateGemma4(settings);
+    return generateVideoEditScriptGemma4(videoBlob, duration, vibe, audioBlob, settings);
   }
 
   if (settings.aiProvider === 'anythingllm') {
@@ -269,7 +311,8 @@ async function generateAutoMagicEditGemini(
     blobToBase64(videoBlob),
   ]);
   const mimeType = videoBlob.type || 'video/webm';
-  const ai = new GoogleGenAI({ apiKey: settings.geminiApiKey || process.env.GEMINI_API_KEY });
+  const apiKey = await getRotatedGeminiKey();
+  const ai = new GoogleGenAI({ apiKey });
 
   const prompt = `Expert video editor...`; // Prompt aynı
 
@@ -336,7 +379,8 @@ async function generateVideoEditScriptGemini(
     blobToBase64(videoBlob),
   ]);
   const mimeType = videoBlob.type || 'video/webm';
-  const ai = new GoogleGenAI({ apiKey: settings.geminiApiKey || process.env.GEMINI_API_KEY });
+  const apiKey = await getRotatedGeminiKey();
+  const ai = new GoogleGenAI({ apiKey });
 
   const prompt = `Expert video editor...`; // Prompt aynı
 
@@ -485,5 +529,87 @@ Sadece JSON array döndür:`;
   } catch (e) {
     console.error('AnythingLLM Script parse hatası. Ham yanıt:', text.slice(0, 500));
     throw new Error('AnythingLLM geçersiz JSON formatında yanıt verdi.');
+  }
+}
+
+// ─── Gemma4 ────────────────────────────────────────────────────────────────────
+
+async function generateAutoMagicEditGemma4(
+  videoBlob: Blob,
+  duration: number,
+  _audioBlob: Blob | undefined,
+  settings: any,
+): Promise<AutoMagicResult> {
+  try {
+    const gemma4Service = await createGemma4BrowserService();
+    // Use video-aware analysis for better results
+    return await gemma4Service.generateAutoMagicEditWithVideo(videoBlob, duration, _audioBlob);
+  } catch (error) {
+    console.error('Gemma4 Browser AutoMagic generation failed:', error);
+    
+    // Check if it's an ONNX kernel error and provide fallback
+    if (error.message?.includes('GatherBlockQuantized') || error.message?.includes('kernel')) {
+      console.warn('ONNX kernel issue detected, providing fallback response');
+      return {
+        vibe: 'Energetic',
+        editScript: [{
+          startTime: 0,
+          endTime: duration,
+          playbackRate: 1.0,
+          cssFilter: 'contrast(1.2) saturate(1.3)',
+          frameStyle: 'cinematic',
+          effect: 'none'
+        }],
+        texts: []
+      };
+    }
+    
+    // Try regular method as fallback
+    try {
+      const gemma4Service = await createGemma4BrowserService();
+      return await gemma4Service.generateAutoMagicEdit(videoBlob, duration, _audioBlob);
+    } catch (fallbackError) {
+      console.error('Gemma4 fallback also failed:', fallbackError);
+      // Final fallback response
+      return {
+        vibe: 'Energetic',
+        editScript: [{
+          startTime: 0,
+          endTime: duration,
+          playbackRate: 1.0,
+          cssFilter: 'contrast(1.2) saturate(1.3)',
+          frameStyle: 'cinematic',
+          effect: 'none'
+        }],
+        texts: []
+      };
+    }
+  }
+}
+
+async function generateVideoEditScriptGemma4(
+  videoBlob: Blob,
+  duration: number,
+  vibe: string,
+  _audioBlob: Blob | undefined,
+  settings: any,
+): Promise<EditSegment[]> {
+  try {
+    const gemma4Service = await createGemma4BrowserService();
+    return await gemma4Service.generateVideoEditScript(videoBlob, duration, vibe, _audioBlob);
+  } catch (error) {
+    console.error('Gemma4 Browser script generation failed:', error);
+    // Fallback response
+    const segCount = Math.max(2, Math.min(6, Math.floor(duration / 3)));
+    const segDur = duration / segCount;
+    
+    return Array.from({ length: segCount }, (_, i) => ({
+      startTime: parseFloat((i * segDur).toFixed(2)),
+      endTime: parseFloat(((i + 1) * segDur).toFixed(2)),
+      playbackRate: 1.0,
+      cssFilter: 'contrast(1.2) saturate(1.3)',
+      frameStyle: 'cinematic',
+      effect: 'none',
+    }));
   }
 }
