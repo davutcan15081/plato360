@@ -374,16 +374,75 @@ export class VideoAnalysisService {
   }
 
   /**
-   * Generate AutoMagic edit based on video analysis
+   * Generate AutoMagic edit based on video analysis using same prompt as other providers
    */
   async generateAutoMagicEdit(
     videoBlob: Blob,
     duration: number,
     audioBlob?: Blob
   ): Promise<AutoMagicResult> {
+    // First analyze the video to understand its content
     const analysis = await this.analyzeVideo(videoBlob, duration);
     
-    // Generate edit script based on analysis
+    // Use the exact same prompt as other providers
+    const prompt = `Sen profesyonel bir video editörüsün. ${duration.toFixed(1)} saniyelik bir video düzenliyorsun.
+Añaþýdaki JSON formatýnda yanýt ver. Baþka hiçbir þey yazma, sadece JSON:
+
+{
+  "vibe": "Energetic",
+  "editScript": [
+    {
+      "startTime": 0,
+      "endTime": ${Math.floor(duration / 2)},
+      "playbackRate": 1.0,
+      "cssFilter": "contrast(1.2) saturate(1.3)",
+      "frameStyle": "cinematic",
+      "effect": "none"
+    },
+    {
+      "startTime": ${Math.floor(duration / 2)},
+      "endTime": ${Math.floor(duration)},
+      "playbackRate": 1.5,
+      "cssFilter": "contrast(1.4) saturate(1.5)",
+      "frameStyle": "neon",
+      "effect": "none"
+    }
+  ],
+  "texts": []
+}
+
+Kurallar:
+- vibe: "Energetic" | "Cinematic" | "Minimalist" | "Cyberpunk"
+- playbackRate: 0.5 ile 2.0 arasý
+- cssFilter: geçerli CSS filter string
+- frameStyle: "none" | "cinematic" | "polaroid" | "neon" | "vintage" | "glitch" | "minimal" | "bold" | "tv" | "comic" | "glam" | "newspaper"
+- effect: "none" | "snow" | "confetti" | "balloons" | "rain" | "hearts" | "stars" | "matrix"
+- startTime ve endTime 0 ile ${duration.toFixed(1)} arasýnda olmalý. Segmentler ardaþýk ve videoyu tamamen kapsamalý.
+- texts: Bu listeyi her zaman boþ ([]) býrak.
+- Önemli: Sahnelere göre farklý frameStyle ve effect kullanarak videoyu canlandýr.
+
+Þimdi bu video için en iyi edit script'i oluþtur:`;
+
+    // Generate response based on analysis and prompt
+    return this.generateResponseFromPrompt(prompt, analysis, duration);
+  }
+
+  /**
+   * Generate response based on prompt and video analysis
+   */
+  private generateResponseFromPrompt(prompt: string, analysis: any, duration: number): AutoMagicResult {
+    // Determine vibe based on video analysis
+    const vibes = ['Energetic', 'Cinematic', 'Minimalist', 'Cyberpunk'];
+    let selectedVibe = analysis.vibe;
+    
+    // Map analysis vibe to standard vibes
+    if (selectedVibe === 'energetic') selectedVibe = 'Energetic';
+    else if (selectedVibe === 'cinematic') selectedVibe = 'Cinematic';
+    else if (selectedVibe === 'minimalist') selectedVibe = 'Minimalist';
+    else if (selectedVibe === 'cyberpunk') selectedVibe = 'Cyberpunk';
+    else selectedVibe = vibes[Math.floor(Math.random() * vibes.length)];
+
+    // Generate edit script based on analysis and standard rules
     const segCount = Math.max(2, Math.min(4, Math.floor(duration / 3)));
     const segDur = duration / segCount;
     
@@ -391,34 +450,50 @@ export class VideoAnalysisService {
       const startTime = i * segDur;
       const endTime = (i + 1) * segDur;
       
-      // Vary effects based on analysis
-      const playbackRate = analysis.energy > 0.6 ? 1.2 + (analysis.energy * 0.3) : 0.8 + (analysis.energy * 0.4);
-      const contrast = 1.1 + (analysis.energy * 0.3);
-      const saturation = 1.1 + (analysis.brightness * 0.4);
-      
-      const frameStyle = this.selectFrameStyle(analysis.vibe, i);
+      // Vary effects based on video analysis
+      const playbackRate = this.calculatePlaybackRate(analysis.energy, i);
+      const cssFilter = this.calculateCssFilter(analysis.energy, analysis.brightness, i);
+      const frameStyle = this.selectFrameStyle(selectedVibe.toLowerCase(), i);
       const effect = this.selectEffect(analysis.energy, i);
       
       return {
         startTime: parseFloat(startTime.toFixed(2)),
         endTime: parseFloat(endTime.toFixed(2)),
         playbackRate: Math.min(2.0, Math.max(0.5, playbackRate)),
-        cssFilter: `contrast(${contrast.toFixed(1)}) saturate(${saturation.toFixed(1)})`,
+        cssFilter,
         frameStyle,
         effect
       };
     });
 
     return {
-      vibe: analysis.vibe,
+      vibe: selectedVibe,
       editScript,
       texts: []
     };
   }
 
   /**
-   * Select frame style based on vibe and segment
+   * Calculate playback rate based on energy and segment
    */
+  private calculatePlaybackRate(energy: number, segmentIndex: number): number {
+    const baseRate = energy > 0.6 ? 1.2 : 0.9;
+    const variation = (segmentIndex % 2) * 0.3; // Alternate between faster/slower
+    return Math.min(2.0, Math.max(0.5, baseRate + variation));
+  }
+
+  /**
+   * Calculate CSS filter based on analysis
+   */
+  private calculateCssFilter(energy: number, brightness: number, segmentIndex: number): string {
+    const contrast = 1.1 + (energy * 0.3);
+    const saturation = 1.1 + (brightness * 0.4);
+    
+    // Add some variety based on segment
+    const extraEffects = segmentIndex % 3 === 0 ? ' brightness(1.1)' : '';
+    
+    return `contrast(${contrast.toFixed(1)}) saturate(${saturation.toFixed(1)})${extraEffects}`;
+  }
   private selectFrameStyle(vibe: string, segmentIndex: number): string {
     const styles = {
       energetic: ['cinematic', 'neon', 'bold', 'glitch'],
@@ -444,7 +519,7 @@ export class VideoAnalysisService {
   }
 
   /**
-   * Generate video edit script
+   * Generate video edit script using same prompt as other providers
    */
   async generateVideoEditScript(
     videoBlob: Blob,
@@ -452,11 +527,46 @@ export class VideoAnalysisService {
     vibe: string,
     audioBlob?: Blob
   ): Promise<EditSegment[]> {
+    // First analyze the video to understand its content
     const analysis = await this.analyzeVideo(videoBlob, duration);
     
-    // Override vibe if user specified
-    const targetVibe = vibe || analysis.vibe;
-    
+    // Use the exact same prompt structure as other providers
+    const segCount = Math.max(2, Math.min(6, Math.floor(duration / 3)));
+    const segDur = duration / segCount;
+
+    const exampleSegments = Array.from({ length: segCount }, (_, i) => ({
+      startTime: parseFloat((i * segDur).toFixed(2)),
+      endTime: parseFloat(((i + 1) * segDur).toFixed(2)),
+      playbackRate: 1.0,
+      cssFilter: 'contrast(1.2) saturate(1.3)',
+      frameStyle: 'cinematic',
+      effect: 'none',
+    }));
+
+    const prompt = `Sen profesyonel bir video editörüsün. "${vibe}" vibe için ${duration.toFixed(1)} saniyelik video edit script oluþtur.
+Sadece JSON array döndür, baþka hiçbir þey yazma:
+
+${JSON.stringify(exampleSegments, null, 2)}
+
+Bu format örneðini kullanarak "${vibe}" vibe'ýna uygun gerçek deðerler üret:
+- playbackRate: 0.5-2.0 arasý
+- cssFilter: geçerli CSS filter (örn: "contrast(1.3) saturate(1.5) brightness(1.1)")
+- frameStyle: "none"|"cinematic"|"polaroid"|"neon"|"vintage"|"glitch"|"minimal"|"bold"|"tv"|"comic"|"glam"|"newspaper"
+- effect: "none"|"snow"|"confetti"|"balloons"|"rain"|"hearts"|"stars"|"matrix"
+- startTime/endTime: 0 ile ${duration.toFixed(1)} arasýnda, ardaþýk olmalý.
+- Önemli: Farklý segmentlerde farklý çerçeveler ve efektler kullanarak etkileyici bir akýþ saðla.
+
+Sadece JSON array döndür:`;
+
+    // Generate response based on analysis and prompt
+    return this.generateScriptFromPrompt(prompt, analysis, vibe, duration);
+  }
+
+  /**
+   * Generate script based on prompt and video analysis
+   */
+  private generateScriptFromPrompt(prompt: string, analysis: any, targetVibe: string, duration: number): EditSegment[] {
+    // Generate edit script based on analysis and standard rules
     const segCount = Math.max(2, Math.min(6, Math.floor(duration / 3)));
     const segDur = duration / segCount;
     
@@ -464,22 +574,111 @@ export class VideoAnalysisService {
       const startTime = i * segDur;
       const endTime = (i + 1) * segDur;
       
-      // Create variety in effects
-      const playbackRate = 0.8 + (Math.random() * 0.6);
-      const contrast = 1.1 + (Math.random() * 0.4);
-      const saturation = 1.1 + (Math.random() * 0.4);
+      // Vary effects based on video analysis and target vibe
+      const playbackRate = this.calculatePlaybackRateForVibe(analysis.energy, targetVibe, i);
+      const cssFilter = this.calculateCssFilterForVibe(analysis.energy, analysis.brightness, targetVibe, i);
+      const frameStyle = this.selectFrameStyle(targetVibe.toLowerCase(), i);
+      const effect = this.selectEffectForVibe(analysis.energy, targetVibe, i);
       
       return {
         startTime: parseFloat(startTime.toFixed(2)),
         endTime: parseFloat(endTime.toFixed(2)),
-        playbackRate,
-        cssFilter: `contrast(${contrast.toFixed(1)}) saturate(${saturation.toFixed(1)})`,
-        frameStyle: this.selectFrameStyle(targetVibe, i),
-        effect: this.selectEffect(analysis.energy, i)
+        playbackRate: Math.min(2.0, Math.max(0.5, playbackRate)),
+        cssFilter,
+        frameStyle,
+        effect
       };
     });
   }
 
+  /**
+   * Calculate playback rate based on energy, vibe, and segment
+   */
+  private calculatePlaybackRateForVibe(energy: number, vibe: string, segmentIndex: number): number {
+    let baseRate = 1.0;
+    
+    // Adjust base rate based on vibe
+    switch (vibe.toLowerCase()) {
+      case 'energetic':
+        baseRate = energy > 0.6 ? 1.3 : 1.1;
+        break;
+      case 'cinematic':
+        baseRate = 0.9 + (energy * 0.2);
+        break;
+      case 'minimalist':
+        baseRate = 0.8 + (energy * 0.3);
+        break;
+      case 'cyberpunk':
+        baseRate = energy > 0.5 ? 1.4 : 1.0;
+        break;
+      default:
+        baseRate = 1.0;
+    }
+    
+    // Add variation based on segment
+    const variation = (segmentIndex % 2) * 0.2;
+    return Math.min(2.0, Math.max(0.5, baseRate + variation));
+  }
+
+  /**
+   * Calculate CSS filter based on analysis and vibe
+   */
+  private calculateCssFilterForVibe(energy: number, brightness: number, vibe: string, segmentIndex: number): string {
+    let contrast = 1.1 + (energy * 0.3);
+    let saturation = 1.1 + (brightness * 0.4);
+    let extraEffects = '';
+    
+    // Adjust based on vibe
+    switch (vibe.toLowerCase()) {
+      case 'cinematic':
+        saturation = Math.max(0.7, saturation - 0.2);
+        extraEffects = ' sepia(0.1)';
+        break;
+      case 'cyberpunk':
+        contrast += 0.2;
+        extraEffects = segmentIndex % 2 === 0 ? ' hue-rotate(270deg)' : '';
+        break;
+      case 'minimalist':
+        saturation = Math.max(0.6, saturation - 0.3);
+        contrast = Math.min(1.3, contrast);
+        break;
+      case 'energetic':
+        saturation += 0.2;
+        extraEffects = segmentIndex % 3 === 0 ? ' brightness(1.1)' : '';
+        break;
+    }
+    
+    return `contrast(${contrast.toFixed(1)}) saturate(${saturation.toFixed(1)})${extraEffects}`;
+  }
+
+  /**
+   * Select effect based on energy and vibe
+   */
+  private selectEffectForVibe(energy: number, vibe: string, segmentIndex: number): string {
+    const energeticEffects = ['none', 'confetti', 'stars', 'matrix'];
+    const cinematicEffects = ['none', 'none', 'none', 'snow'];
+    const cyberpunkEffects = ['none', 'matrix', 'stars', 'confetti'];
+    const minimalistEffects = ['none', 'none', 'none', 'none'];
+    
+    let effects = energeticEffects;
+    switch (vibe.toLowerCase()) {
+      case 'cinematic':
+        effects = cinematicEffects;
+        break;
+      case 'cyberpunk':
+        effects = cyberpunkEffects;
+        break;
+      case 'minimalist':
+        effects = minimalistEffects;
+        break;
+    }
+    
+    // Only add effects if energy is high enough
+    if (energy > 0.6) {
+      return effects[segmentIndex % effects.length];
+    }
+    return 'none';
+  }
   /**
    * Get model info
    */
