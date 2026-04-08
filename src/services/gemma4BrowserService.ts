@@ -23,15 +23,16 @@ export class Gemma4BrowserService {
   private config: Gemma4BrowserConfig;
   private isInitialized = false;
   private progressCallback?: (progress: GenerationProgress) => void;
+  private responseCache = new Map<string, any>();
 
   constructor(config: Partial<Gemma4BrowserConfig> = {}) {
     this.config = {
       model: 'onnx-community/gemma-4-E2B-it-ONNX', // Use E2B for better compatibility
-      device: 'wasm', // Default to WASM for better compatibility
+      device: Gemma4BrowserService.checkWebGPUSupport() ? 'webgpu' : 'wasm', // Auto-detect WebGPU
       dtype: 'fp32', // Use fp32 for ONNX compatibility
-      maxNewTokens: 512, // Smaller for WASM mode
-      temperature: 0.7,
-      topP: 0.9,
+      maxNewTokens: 256, // Reduced for faster generation
+      temperature: 0.5, // Lower temperature for more deterministic responses
+      topP: 0.8, // Lower top_p for faster convergence
       ...config
     };
   }
@@ -115,6 +116,42 @@ export class Gemma4BrowserService {
   }
 
   /**
+   * Generate cache key from prompt
+   */
+  private getCacheKey(prompt: string): string {
+    return btoa(prompt.substring(0, 100)).replace(/[^a-zA-Z0-9]/g, '').substring(0, 20);
+  }
+
+  /**
+   * Get cached response
+   */
+  private getCachedResponse<T>(prompt: string): T | null {
+    const key = this.getCacheKey(prompt);
+    const cached = this.responseCache.get(key);
+    if (cached && Date.now() - cached.timestamp < 300000) { // 5 minutes cache
+      return cached.data;
+    }
+    return null;
+  }
+
+  /**
+   * Cache response
+   */
+  private cacheResponse<T>(prompt: string, data: T): void {
+    const key = this.getCacheKey(prompt);
+    this.responseCache.set(key, {
+      data,
+      timestamp: Date.now()
+    });
+    
+    // Limit cache size
+    if (this.responseCache.size > 50) {
+      const oldestKey = this.responseCache.keys().next().value;
+      this.responseCache.delete(oldestKey);
+    }
+  }
+
+  /**
    * Generate text
    */
   async generateText(prompt: string, streamCallback?: (text: string) => void): Promise<string> {
@@ -147,10 +184,14 @@ export class Gemma4BrowserService {
           do_sample: true,
           temperature: this.config.temperature,
           top_p: this.config.topP,
-          streamer
+          streamer,
+          // Optimize for faster generation
+          use_cache: true,
+          early_stopping: true
         });
         
-        fullText = accumulatedText;
+        this.updateProgress('ready', 100, 'Metin üretimi tamamlandı!');
+        return accumulatedText;
       } else {
         // Non-streaming generation
         const outputs = await this.model.generate({
@@ -159,6 +200,9 @@ export class Gemma4BrowserService {
           do_sample: true,
           temperature: this.config.temperature,
           top_p: this.config.topP,
+          // Optimize for faster generation
+          use_cache: true,
+          early_stopping: true
         });
 
         fullText = this.tokenizer.decode(outputs[0], { skip_special_tokens: true });
@@ -178,11 +222,23 @@ export class Gemma4BrowserService {
    * Generate JSON response
    */
   async generateJson<T>(prompt: string): Promise<T> {
+    // Check cache first
+    const cached = this.getCachedResponse<T>(prompt);
+    if (cached) {
+      console.log('Using cached response');
+      return cached;
+    }
+
     const jsonPrompt = `${prompt}\n\nIMPORTANT: Respond only with valid JSON, no other text.`;
     const response = await this.generateText(jsonPrompt);
     
     try {
-      return JSON.parse(response) as T;
+      const parsed = JSON.parse(response) as T;
+      
+      // Cache the response
+      this.cacheResponse(prompt, parsed);
+      
+      return parsed;
     } catch (error) {
       console.error('JSON parse failed:', error);
       throw new Error('Geçersiz JSON formatı');
@@ -253,43 +309,11 @@ Kurallar:
     duration: number,
     audioBlob?: Blob
   ): Promise<AutoMagicResult> {
-    const prompt = `Sen profesyonel bir video editörüsün. ${duration.toFixed(1)} saniyelik bir video analiz ediyorsun.
-Aşağıdaki JSON formatında yanıt ver. Başka hiçbir şey yazma, sadece JSON:
-
-{
-  "vibe": "Energetic",
-  "editScript": [
-    {
-      "startTime": 0,
-      "endTime": ${Math.floor(duration / 2)},
-      "playbackRate": 1.0,
-      "cssFilter": "contrast(1.2) saturate(1.3)",
-      "frameStyle": "cinematic",
-      "effect": "none"
-    },
-    {
-      "startTime": ${Math.floor(duration / 2)},
-      "endTime": ${Math.floor(duration)},
-      "playbackRate": 1.5,
-      "cssFilter": "contrast(1.4) saturate(1.5)",
-      "frameStyle": "neon",
-      "effect": "none"
-    }
-  ],
-  "texts": []
-}
-
-Kurallar:
-- vibe: "Energetic" | "Cinematic" | "Minimalist" | "Cyberpunk"
-- playbackRate: 0.5 ile 2.0 arası
-- cssFilter: geçerli CSS filter string
-- frameStyle: "none" | "cinematic" | "polaroid" | "neon" | "vintage" | "glitch" | "minimal" | "bold" | "tv" | "comic" | "glam" | "newspaper"
-- effect: "none" | "snow" | "confetti" | "balloons" | "rain" | "hearts" | "stars" | "matrix"
-- startTime ve endTime 0 ile ${duration.toFixed(1)} arasında olmalı. Segmentler ardışık ve videoyu tamamen kapsamalı.
-- texts: Bu listeyi her zaman boş ([]) bırak.
-- Önemli: Sahnelere göre farklı frameStyle ve effect kullanarak videoyu canlandır.
-
-Şimdi bu video için en iyi edit script'i oluştur:`;
+    const prompt = `${duration.toFixed(1)}s video edit script. Energetic vibe.
+JSON: {"vibe":"Energetic","editScript":[],"texts":[]}
+Create 2-4 segments with: startTime, endTime, playbackRate(0.5-2.0), cssFilter, frameStyle, effect.
+frameStyle: cinematic|neon|vintage|glitch|minimal|bold
+effect: none|snow|confetti|rain|stars`;
 
     try {
       return await this.generateJson<AutoMagicResult>(prompt);
@@ -332,20 +356,11 @@ Kurallar:
       effect: 'none',
     }));
 
-    const prompt = `Sen profesyonel bir video editörüsün. "${vibe}" vibe için ${duration.toFixed(1)} saniyelik video edit script oluştur.
-Sadece JSON array döndür, başka hiçbir şey yazma:
-
-${JSON.stringify(exampleSegments, null, 2)}
-
-Bu format örneğini kullanarak "${vibe}" vibe'ına uygun gerçek değerler üret:
-- playbackRate: 0.5-2.0 arası
-- cssFilter: geçerli CSS filter (örn: "contrast(1.3) saturate(1.5) brightness(1.1)")
-- frameStyle: "none"|"cinematic"|"polaroid"|"neon"|"vintage"|"glitch"|"minimal"|"bold"|"tv"|"comic"|"glam"|"newspaper"
-- effect: "none"|"snow"|"confetti"|"balloons"|"rain"|"hearts"|"stars"|"matrix"
-- startTime/endTime: 0 ile ${duration.toFixed(1)} arasında, ardışık olmalı.
-- Önemli: Farklı segmentlerde farklı çerçeveler ve efektler kullanarak etkileyici bir akış sağla.
-
-Sadece JSON array döndür:`;
+    const prompt = `${duration.toFixed(1)}s video edit script for "${vibe}" vibe.
+JSON array with segments: startTime, endTime, playbackRate(0.5-2.0), cssFilter, frameStyle, effect.
+frameStyle: cinematic|neon|vintage|glitch|minimal|bold
+effect: none|snow|confetti|rain|stars
+Use different styles per segment for dynamic flow.`;
 
     try {
       return await this.generateJson<EditSegment[]>(prompt);
@@ -391,8 +406,11 @@ export async function createGemma4BrowserService(
     model: settings.gemma4Model === 'gemma4:e2b' 
       ? 'onnx-community/gemma-4-E2B-it-ONNX'
       : 'onnx-community/gemma-4-E4B-it-ONNX',
-    device: 'wasm', // Default to WASM for compatibility
-    dtype: 'fp32' // Use fp32 for ONNX compatibility
+    device: Gemma4BrowserService.checkWebGPUSupport() ? 'webgpu' : 'wasm', // Auto-detect WebGPU
+    dtype: 'fp32', // Use fp32 for ONNX compatibility
+    maxNewTokens: 200, // Reduced for video edit tasks
+    temperature: 0.4, // Lower for more predictable JSON output
+    topP: 0.7 // More focused generation
   };
 
   const service = new Gemma4BrowserService(config);
