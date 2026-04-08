@@ -122,11 +122,32 @@ export function VideoPreview({
     let raf: number, lastRate = -1;
     const tick = () => {
       const v = videoRef.current;
+      const a = audioRef.current;
       if (v) {
         const time = v.currentTime;
         const seg = editScript.find(s => time >= s.startTime && time <= s.endTime) ?? editScript.at(-1)!;
         if (seg && seg !== segRef.current) { setCurrentSeg(seg); segRef.current = seg; }
-        if (seg) { let r = seg.playbackRate ?? 1; if (!r || isNaN(r) || r <= 0) r = 1; r = Math.min(5, Math.max(0.5, r)); if (r !== lastRate) { v.playbackRate = r; lastRate = r; } }
+        
+        // Sync audio with video playback rate
+        if (seg) { 
+          let r = seg.playbackRate ?? 1; 
+          if (!r || isNaN(r) || r <= 0) r = 1; 
+          r = Math.min(5, Math.max(0.5, r)); 
+          
+          // Apply playback rate to both video and audio
+          if (r !== lastRate) { 
+            v.playbackRate = r; 
+            if (a && !a.paused) {
+              a.playbackRate = r; // Sync audio playback rate with video
+            }
+            lastRate = r; 
+          }
+        }
+
+        // Sync audio time with video time
+        if (a && Math.abs(a.currentTime - v.currentTime) > 0.1) {
+          a.currentTime = v.currentTime;
+        }
 
         let rf = userFrame, re = userEffect;
         if (!frameTiming.isFull && (time < frameTiming.startTime || time > frameTiming.endTime)) rf = seg?.frameStyle || 'none';
@@ -314,7 +335,17 @@ export function VideoPreview({
       if (!frameTiming.isFull && (t < frameTiming.startTime || t > frameTiming.endTime)) rf = seg?.frameStyle || 'none';
       if (!effectTiming.isFull && (t < effectTiming.startTime || t > effectTiming.endTime)) re = seg?.effect || 'none';
       let r = seg?.playbackRate ?? 1; if (!r || isNaN(r) || r <= 0) r = 1; r = Math.min(5, Math.max(0.5, r));
-      if (r !== lastRate) { video.playbackRate = r; lastRate = r; }
+      if (r !== lastRate) { 
+        video.playbackRate = r; 
+        audio.playbackRate = r; // Sync audio playback rate with video during export
+        lastRate = r; 
+      }
+      
+      // Sync audio time with video time during export
+      if (Math.abs(audio.currentTime - video.currentTime) > 0.1) {
+        audio.currentTime = video.currentTime;
+      }
+      
       ctx.filter = seg?.cssFilter && seg.cssFilter !== 'none' ? seg.cssFilter : 'none';
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       initPfx(re);
