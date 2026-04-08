@@ -102,12 +102,14 @@ export function VideoPreview({
   const musicFileRef = useRef<HTMLInputElement>(null);
   const [audioDuration, setAudioDuration] = useState(0);
   const [trimStart, setTrimStart] = useState(0);
-  const [trimEnd, setTrimEnd] = useState(0); // 0 = henüz yüklenmedi
+  const [trimEnd, setTrimEnd] = useState(0);
   const trimStartRef = useRef(0);
   const trimEndRef = useRef(0);
-  const [isTrimming, setIsTrimming] = useState(false);   // kaydet işlemi sürüyor
-  const [trimApplied, setTrimApplied] = useState(false); // son kayıt başarılı feedback
-  const sourceBlobRef = useRef<string | null>(null);      // kırpılmamış orijinal url
+  const [isTrimming, setIsTrimming] = useState(false);
+  const [trimApplied, setTrimApplied] = useState(false);
+  const sourceBlobRef = useRef<string | null>(null);
+  const trimBarRef = useRef<HTMLDivElement>(null);
+  const trimDragging = useRef<'start' | 'end' | null>(null);
 
   /* effects */
   useEffect(() => {
@@ -334,6 +336,7 @@ export function VideoPreview({
       }
 
       setTrimApplied(true);
+      setOpenPanel(null); // paneli kapat
       setTimeout(() => setTrimApplied(false), 2000);
     } catch (err) {
       console.error('Trim failed:', err);
@@ -1104,78 +1107,88 @@ export function VideoPreview({
                   </button>
                 </div>
 
-                {/* Trim bar */}
-                <div className="relative h-10 flex items-center">
-                  {/* Arka plan track */}
-                  <div
-                    className="absolute inset-x-0 h-2 rounded-full"
-                    style={{ background: 'rgba(255,255,255,0.06)' }}
-                  />
-                  {/* Seçili alan */}
-                  <div
-                    className="absolute h-2 rounded-full"
-                    style={{
-                      left: `${(trimStart / audioDuration) * 100}%`,
-                      right: `${100 - (trimEnd / audioDuration) * 100}%`,
-                      background: 'linear-gradient(90deg, #f59e0b, #ea580c)',
-                      boxShadow: '0 0 6px rgba(245,158,11,0.4)',
-                    }}
-                  />
-                  {/* Start thumb */}
-                  <input
-                    type="range" min={0} max={audioDuration} step={0.1}
-                    value={trimStart}
-                    onChange={e => {
-                      const val = Math.min(+e.target.value, trimEnd - 0.5);
+                {/* Tek trim bar */}
+                {(() => {
+                  const posToTime = (clientX: number) => {
+                    const rect = trimBarRef.current?.getBoundingClientRect();
+                    if (!rect) return 0;
+                    return Math.max(0, Math.min(audioDuration, ((clientX - rect.left) / rect.width) * audioDuration));
+                  };
+                  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+                    const rect = trimBarRef.current?.getBoundingClientRect();
+                    if (!rect) return;
+                    const clickPx = e.clientX - rect.left;
+                    const startPx = (trimStartRef.current / audioDuration) * rect.width;
+                    const endPx   = (trimEndRef.current   / audioDuration) * rect.width;
+                    trimDragging.current = Math.abs(clickPx - startPx) <= Math.abs(clickPx - endPx) ? 'start' : 'end';
+                    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+                    e.preventDefault();
+                  };
+                  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+                    if (!trimDragging.current) return;
+                    const t = posToTime(e.clientX);
+                    if (trimDragging.current === 'start') {
+                      const val = Math.min(t, trimEndRef.current - 0.5);
                       setTrimStart(val); trimStartRef.current = val;
                       if (audioRef.current) audioRef.current.currentTime = val;
-                    }}
-                    className="absolute inset-0 w-full opacity-0 cursor-pointer z-10"
-                    style={{ pointerEvents: 'auto' }}
-                  />
-                  {/* End thumb — üstüne bindirilmiş ikinci range */}
-                  <input
-                    type="range" min={0} max={audioDuration} step={0.1}
-                    value={trimEnd}
-                    onChange={e => {
-                      const val = Math.max(+e.target.value, trimStart + 0.5);
+                    } else {
+                      const val = Math.max(t, trimStartRef.current + 0.5);
                       setTrimEnd(val); trimEndRef.current = val;
-                    }}
-                    className="absolute inset-0 w-full opacity-0 cursor-pointer z-20"
-                    style={{ pointerEvents: 'auto' }}
-                  />
-                  {/* Start handle görsel */}
-                  <div
-                    className="absolute w-4 h-4 rounded-full border-2 border-amber-400 bg-zinc-900 -translate-x-1/2 z-30 pointer-events-none"
-                    style={{ left: `${(trimStart / audioDuration) * 100}%`, boxShadow: '0 0 0 2px rgba(245,158,11,0.3)' }}
-                  />
-                  {/* End handle görsel */}
-                  <div
-                    className="absolute w-4 h-4 rounded-full border-2 border-orange-500 bg-zinc-900 -translate-x-1/2 z-30 pointer-events-none"
-                    style={{ left: `${(trimEnd / audioDuration) * 100}%`, boxShadow: '0 0 0 2px rgba(234,88,12,0.3)' }}
-                  />
-                </div>
+                    }
+                  };
+                  const onPointerUp = () => { trimDragging.current = null; };
 
-                {/* Zaman göstergesi */}
-                <div className="flex justify-between items-center">
-                  <div
-                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg"
-                    style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.15)' }}
-                  >
-                    <div className="w-2 h-2 rounded-full bg-amber-400" />
-                    <span className="text-amber-400 text-[11px] font-mono font-bold tabular-nums">{fmt(trimStart)}</span>
-                  </div>
-                  <span className="text-zinc-700 text-[10px] font-mono tabular-nums">
-                    {fmt(trimEnd - trimStart)} seçili
-                  </span>
-                  <div
-                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg"
-                    style={{ background: 'rgba(234,88,12,0.08)', border: '1px solid rgba(234,88,12,0.15)' }}
-                  >
-                    <div className="w-2 h-2 rounded-full bg-orange-500" />
-                    <span className="text-orange-400 text-[11px] font-mono font-bold tabular-nums">{fmt(trimEnd)}</span>
-                  </div>
-                </div>
+                  const startPct = (trimStart / audioDuration) * 100;
+                  const endPct   = (trimEnd   / audioDuration) * 100;
+
+                  return (
+                    <div className="flex flex-col gap-2 select-none">
+                      <div
+                        ref={trimBarRef}
+                        className="relative h-10 flex items-center cursor-pointer touch-none"
+                        onPointerDown={onPointerDown}
+                        onPointerMove={onPointerMove}
+                        onPointerUp={onPointerUp}
+                        onPointerCancel={onPointerUp}
+                      >
+                        {/* Track bg */}
+                        <div className="absolute inset-x-0 h-2 rounded-full" style={{ background: 'rgba(255,255,255,0.06)' }} />
+                        {/* Sol kırpılan */}
+                        <div className="absolute h-2 rounded-l-full" style={{ left: 0, width: `${startPct}%`, background: 'rgba(255,255,255,0.1)' }} />
+                        {/* Seçili */}
+                        <div className="absolute h-2" style={{
+                          left: `${startPct}%`, width: `${endPct - startPct}%`,
+                          background: 'linear-gradient(90deg,#f59e0b,#ea580c)',
+                          boxShadow: '0 0 6px rgba(245,158,11,0.45)',
+                        }} />
+                        {/* Sağ kırpılan */}
+                        <div className="absolute h-2 rounded-r-full" style={{ left: `${endPct}%`, right: 0, background: 'rgba(255,255,255,0.1)' }} />
+                        {/* Start handle */}
+                        <div className="absolute w-4 h-6 rounded-sm -translate-x-1/2 flex items-center justify-center pointer-events-none"
+                          style={{ left: `${startPct}%`, background: '#f59e0b', boxShadow: '0 0 0 2px rgba(245,158,11,0.35),0 2px 8px rgba(0,0,0,0.5)' }}>
+                          <div className="w-0.5 h-3 rounded-full bg-black/40" />
+                        </div>
+                        {/* End handle */}
+                        <div className="absolute w-4 h-6 rounded-sm -translate-x-1/2 flex items-center justify-center pointer-events-none"
+                          style={{ left: `${endPct}%`, background: '#ea580c', boxShadow: '0 0 0 2px rgba(234,88,12,0.35),0 2px 8px rgba(0,0,0,0.5)' }}>
+                          <div className="w-0.5 h-3 rounded-full bg-black/40" />
+                        </div>
+                      </div>
+                      {/* Zaman etiketleri */}
+                      <div className="flex justify-between items-center">
+                        <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg" style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)' }}>
+                          <div className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                          <span className="text-amber-400 text-[11px] font-mono font-bold tabular-nums">{fmt(trimStart)}</span>
+                        </div>
+                        <span className="text-zinc-600 text-[10px] font-mono tabular-nums">{fmt(trimEnd - trimStart)} seçili</span>
+                        <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg" style={{ background: 'rgba(234,88,12,0.08)', border: '1px solid rgba(234,88,12,0.2)' }}>
+                          <div className="w-1.5 h-1.5 rounded-full bg-orange-500" />
+                          <span className="text-orange-400 text-[11px] font-mono font-bold tabular-nums">{fmt(trimEnd)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* Kaydet butonu */}
                 <button
