@@ -157,9 +157,12 @@ export class VideoAnalysisService {
     }
 
     try {
+      console.log('Extracting frames from video...');
       const frames = await this.extractFrames(videoBlob, this.config.maxFrames);
+      console.log('Extracted', frames.length, 'frames');
       
       if (frames.length === 0) {
+        console.warn('No frames extracted, using fallback');
         // Fallback analysis
         return {
           vibe: 'energetic',
@@ -170,45 +173,62 @@ export class VideoAnalysisService {
         };
       }
 
+      console.log('Analyzing frames with ALGORITHMS...');
       let totalEnergy = 0;
       let totalBrightness = 0;
       const allColors: string[] = [];
+      let frameAnalyses: any[] = [];
       
-      // Analyze each frame
-      for (const frame of frames) {
-        // Classify content
-        const classification = await this.classifier(frame.data);
-        const topClass = classification[0];
+      // Analyze each frame with pure algorithms
+      for (let i = 0; i < frames.length; i++) {
+        const frame = frames[i];
+        console.log(`Analyzing frame ${i + 1}/${frames.length} ALGORITHMICALLY`);
         
-        // Extract features for energy analysis
-        const features = await this.featureExtractor(frame.data);
-        
-        // Calculate brightness
+        // Calculate brightness algorithmically
         const brightness = this.calculateBrightness(frame.data);
         totalBrightness += brightness;
         
-        // Determine energy based on classification
-        const energy = this.classifyEnergy(topClass.label);
+        // Calculate energy algorithmically based on frame content
+        const energy = this.calculateEnergyFromFrame(frame.data);
         totalEnergy += energy;
         
-        // Extract dominant colors (simplified)
+        // Extract colors algorithmically
         const colors = this.extractColors(frame.data);
         allColors.push(...colors);
+        
+        // Store frame analysis for later use
+        frameAnalyses.push({
+          frameIndex: i,
+          brightness,
+          energy,
+          colors,
+          motion: i > 0 ? this.calculateFrameDifference(frames[i-1].data, frame.data) : 0
+        });
+        
+        console.log(`Frame ${i + 1} - Brightness: ${brightness.toFixed(2)}, Energy: ${energy.toFixed(2)}, Colors: [${colors.join(', ')}]`);
       }
 
       const avgEnergy = totalEnergy / frames.length;
       const avgBrightness = totalBrightness / frames.length;
       
-      // Determine overall vibe
-      const vibe = this.determineVibe(avgEnergy, avgBrightness, allColors);
+      console.log('Average values - Energy:', avgEnergy.toFixed(2), 'Brightness:', avgBrightness.toFixed(2));
+      console.log('All detected colors:', [...new Set(allColors)]);
       
-      return {
+      // Determine overall vibe based on ALGORITHMIC analysis
+      const vibe = this.determineVibeAlgorithmically(avgEnergy, avgBrightness, allColors, frameAnalyses);
+      console.log('Determined vibe ALGORITHMICALLY:', vibe);
+      
+      const result = {
         vibe,
         energy: avgEnergy,
         motion: this.estimateMotion(frames),
         brightness: avgBrightness,
-        colors: [...new Set(allColors)].slice(0, 3) // Top 3 unique colors
+        colors: [...new Set(allColors)].slice(0, 3), // Top 3 unique colors
+        frameAnalyses // Store detailed frame analysis for use in editing
       };
+      
+      console.log('Final ALGORITHMIC analysis result:', result);
+      return result;
       
     } catch (error) {
       console.error('Video analysis failed:', error);
@@ -320,8 +340,121 @@ export class VideoAnalysisService {
   }
 
   /**
-   * Determine overall vibe based on analysis
+   * Calculate energy from frame data using pure algorithms
    */
+  private calculateEnergyFromFrame(frameData: ImageData): number {
+    const data = frameData.data;
+    let totalEnergy = 0;
+    let contrastSum = 0;
+    let saturationSum = 0;
+    
+    // Calculate contrast and saturation from pixel data
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i] / 255;
+      const g = data[i + 1] / 255;
+      const b = data[i + 2] / 255;
+      
+      // Calculate brightness
+      const brightness = (r + g + b) / 3;
+      
+      // Calculate local contrast (deviation from mean)
+      const localContrast = Math.abs(r - brightness) + Math.abs(g - brightness) + Math.abs(b - brightness);
+      contrastSum += localContrast;
+      
+      // Calculate saturation
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      const saturation = max === 0 ? 0 : (max - min) / max;
+      saturationSum += saturation;
+      
+      // High brightness and saturation contribute to energy
+      totalEnergy += brightness * 0.3 + saturation * 0.4 + localContrast * 0.3;
+    }
+    
+    const pixelCount = data.length / 4;
+    const avgEnergy = totalEnergy / pixelCount;
+    const avgContrast = contrastSum / pixelCount;
+    const avgSaturation = saturationSum / pixelCount;
+    
+    // Normalize to 0-1 range with emphasis on contrast and saturation
+    return Math.min(1, (avgEnergy * 0.3 + avgContrast * 0.4 + avgSaturation * 0.3) * 2);
+  }
+
+  /**
+   * Determine vibe algorithmically based on video content analysis
+   */
+  private determineVibeAlgorithmically(
+    avgEnergy: number, 
+    avgBrightness: number, 
+    colors: string[], 
+    frameAnalyses: any[]
+  ): string {
+    console.log('Determining vibe ALGORITHMICALLY...');
+    console.log('Input parameters:', { avgEnergy, avgBrightness, colors: colors.slice(0, 5), frameCount: frameAnalyses.length });
+    
+    // Calculate motion variance
+    const motionValues = frameAnalyses.map(f => f.motion);
+    const avgMotion = motionValues.reduce((a, b) => a + b, 0) / motionValues.length;
+    const motionVariance = motionValues.reduce((sum, motion) => sum + Math.pow(motion - avgMotion, 2), 0) / motionValues.length;
+    
+    // Calculate color diversity
+    const uniqueColors = [...new Set(colors)];
+    const colorDiversity = uniqueColors.length / colors.length;
+    
+    // Algorithmic decision tree
+    let vibe = 'energetic'; // default
+    
+    console.log('Algorithmic factors:', {
+      avgEnergy: avgEnergy.toFixed(3),
+      avgBrightness: avgBrightness.toFixed(3),
+      avgMotion: avgMotion.toFixed(3),
+      motionVariance: motionVariance.toFixed(3),
+      colorDiversity: colorDiversity.toFixed(3),
+      dominantColors: colors.slice(0, 3)
+    });
+    
+    // High energy + high motion variance = Energetic
+    if (avgEnergy > 0.6 && motionVariance > 0.1) {
+      vibe = 'energetic';
+      console.log('ALGORITHM: High energy + high motion variance = ENERGETIC');
+    }
+    // Low brightness + low motion = Cinematic
+    else if (avgBrightness < 0.4 && avgMotion < 0.2) {
+      vibe = 'cinematic';
+      console.log('ALGORITHM: Low brightness + low motion = CINEMATIC');
+    }
+    // High color diversity + moderate energy = Cyberpunk
+    else if (colorDiversity > 0.5 && avgEnergy > 0.5) {
+      vibe = 'cyberpunk';
+      console.log('ALGORITHM: High color diversity + moderate energy = CYBERPUNK');
+    }
+    // Low contrast + limited colors = Minimalist
+    else if (avgEnergy < 0.4 && uniqueColors.length < 4) {
+      vibe = 'minimalist';
+      console.log('ALGORITHM: Low energy + limited colors = MINIMALIST');
+    }
+    // Cool colors dominant = Minimalist
+    else if (colors.filter(c => ['blue', 'green', 'cyan', 'purple'].includes(c)).length > colors.length / 2) {
+      vibe = 'minimalist';
+      console.log('ALGORITHM: Cool colors dominant = MINIMALIST');
+    }
+    // Warm colors + high energy = Energetic
+    else if (colors.filter(c => ['red', 'orange', 'yellow'].includes(c)).length > colors.length / 3 && avgEnergy > 0.5) {
+      vibe = 'energetic';
+      console.log('ALGORITHM: Warm colors + high energy = ENERGETIC');
+    }
+    // High brightness variance = Cinematic
+    else if (motionVariance > 0.15) {
+      vibe = 'cinematic';
+      console.log('ALGORITHM: High motion variance = CINEMATIC');
+    }
+    else {
+      console.log('ALGORITHM: Default case = ENERGETIC');
+    }
+    
+    console.log('Final ALGORITHMIC vibe decision:', vibe);
+    return vibe;
+  }
   private determineVibe(energy: number, brightness: number, colors: string[]): string {
     if (energy > 0.7 && brightness > 0.6) {
       return 'energetic';
@@ -337,36 +470,53 @@ export class VideoAnalysisService {
   }
 
   /**
-   * Generate AutoMagic edit based on video analysis
+   * Generate AutoMagic edit based on ALGORITHMIC video analysis
    */
   async generateAutoMagicEdit(
     videoBlob: Blob,
     duration: number,
     audioBlob?: Blob
   ): Promise<AutoMagicResult> {
+    console.log('Starting ALGORITHMIC AutoMagic edit generation...');
+    
+    // First analyze the video to understand its content
     const analysis = await this.analyzeVideo(videoBlob, duration);
     
-    // Generate edit script based on analysis
+    // Generate edit script based on ALGORITHMIC analysis
     const segCount = Math.max(2, Math.min(4, Math.floor(duration / 3)));
     const segDur = duration / segCount;
+    
+    // Add random seed for variation
+    const randomSeed = Date.now() + Math.random();
     
     const editScript = Array.from({ length: segCount }, (_, i) => {
       const startTime = i * segDur;
       const endTime = (i + 1) * segDur;
       
-      // Vary effects based on analysis
-      const playbackRate = analysis.energy > 0.6 ? 1.2 + (analysis.energy * 0.3) : 0.8 + (analysis.energy * 0.4);
-      const contrast = 1.1 + (analysis.energy * 0.3);
-      const saturation = 1.1 + (analysis.brightness * 0.4);
+      // Get frame-specific analysis for this segment
+      const frameIndex = Math.floor((i / segCount) * Math.max(1, (analysis as any).frameAnalyses?.length || 1));
+      const frameAnalysis = (analysis as any).frameAnalyses?.[frameIndex] || {
+        brightness: analysis.brightness,
+        energy: analysis.energy,
+        colors: analysis.colors
+      };
       
-      const frameStyle = this.selectFrameStyle(analysis.vibe, i, analysis);
-      const effect = this.selectEffect(analysis.energy, i);
+      console.log(`Segment ${i}: Using ALGORITHMIC frame analysis`, frameAnalysis);
+      
+      // Add randomness to calculations
+      const randomFactor = 0.8 + ((randomSeed + i) % 10) / 25; // 0.8 to 1.2
+      
+      // Vary effects based on ALGORITHMIC video analysis
+      const playbackRate = this.calculatePlaybackRate(frameAnalysis.energy, i);
+      const cssFilter = this.calculateCssFilter(frameAnalysis.energy, frameAnalysis.brightness, i);
+      const frameStyle = this.selectFrameStyle(analysis.vibe, i, frameAnalysis);
+      const effect = this.selectEffect(frameAnalysis.energy, i);
       
       return {
         startTime: parseFloat(startTime.toFixed(2)),
         endTime: parseFloat(endTime.toFixed(2)),
         playbackRate: Math.min(2.0, Math.max(0.5, playbackRate)),
-        cssFilter: `contrast(${contrast.toFixed(1)}) saturate(${saturation.toFixed(1)})`,
+        cssFilter,
         frameStyle,
         effect
       };
