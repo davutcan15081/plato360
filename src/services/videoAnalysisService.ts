@@ -57,25 +57,45 @@ export class VideoAnalysisService {
   }
 
   /**
-   * Initialize the models with mobile optimizations
+   * Initialize the models with mobile optimizations and extensive debugging
    */
   async initialize(progressCallback?: (progress: number, message: string) => void): Promise<void> {
     if (this.isInitialized) return;
 
     try {
       const isMobile = this.isMobile();
-      console.log('Initializing video analysis service on', isMobile ? 'mobile' : 'desktop');
+      console.log('=== VIDEO ANALYSIS INITIALIZATION START ===');
+      console.log('Platform:', isMobile ? 'mobile' : 'desktop');
+      console.log('User Agent:', navigator.userAgent);
+      console.log('Screen size:', window.innerWidth, 'x', window.innerHeight);
+      console.log('Memory:', (performance as any).memory ? {
+        used: Math.round((performance as any).memory.usedJSHeapSize / 1024 / 1024) + 'MB',
+        total: Math.round((performance as any).memory.totalJSHeapSize / 1024 / 1024) + 'MB',
+        limit: Math.round((performance as any).memory.jsHeapSizeLimit / 1024 / 1024) + 'MB'
+      } : 'N/A');
+      
+      progressCallback?.(5, 'Baßlatiliyor...');
+      
+      // Check transformers.js availability
+      console.log('Transformers.js available:', typeof pipeline !== 'undefined');
+      console.log('Environment config:', {
+        allowLocalModels: env.allowLocalModels,
+        useBrowserCache: env.useBrowserCache,
+        allowRemoteModels: env.allowRemoteModels
+      });
       
       progressCallback?.(10, 'Model yükleniyor...');
       
       // Use lighter model for mobile
       const modelToUse = isMobile ? 'Xenova/mobilenet_v2_1.0_224' : this.config.model;
-      console.log('Using model:', modelToUse);
+      console.log('Selected model:', modelToUse);
       
       // Initialize image classification pipeline with mobile settings
       try {
+        console.log('Attempting to load classifier...');
         this.classifier = await pipeline('image-classification', modelToUse, {
           progress_callback: (info: any) => {
+            console.log('Pipeline progress:', info);
             if (info.status === 'progress') {
               const progress = 10 + (info.progress * 0.8); // 10-90%
               progressCallback?.(progress, `Model yükleniyor... ${Math.round(info.progress)}%`);
@@ -83,32 +103,47 @@ export class VideoAnalysisService {
           },
         });
         
-        console.log('Classifier loaded successfully');
+        console.log('Classifier loaded successfully:', typeof this.classifier);
+        console.log('Classifier methods:', Object.getOwnPropertyNames(this.classifier));
       } catch (classifierError) {
-        console.warn('Classifier failed, trying fallback model:', classifierError);
+        console.error('=== CLASSIFIER ERROR ===');
+        console.error('Error type:', typeof classifierError);
+        console.error('Error name:', classifierError instanceof Error ? classifierError.name : 'N/A');
+        console.error('Error message:', classifierError instanceof Error ? classifierError.message : String(classifierError));
+        console.error('Full error:', classifierError);
+        
+        progressCallback?.(50, 'Yedek model deneniyor...');
         
         // Fallback to even simpler model
         try {
+          console.log('Trying fallback model: Xenova/mobilenet_v2_0.35_96');
           this.classifier = await pipeline('image-classification', 'Xenova/mobilenet_v2_0.35_96', {
             progress_callback: (info: any) => {
+              console.log('Fallback progress:', info);
               if (info.status === 'progress') {
-                const progress = 10 + (info.progress * 0.8);
+                const progress = 50 + (info.progress * 0.4);
                 progressCallback?.(progress, `Yedek model yükleniyor... ${Math.round(info.progress)}%`);
               }
             },
           });
-          console.log('Fallback classifier loaded');
+          console.log('Fallback classifier loaded successfully');
         } catch (fallbackError) {
-          console.error('All classifiers failed:', fallbackError);
-          throw new Error('Model yüklenemedi - internet baglantinizi kontrol edin');
+          console.error('=== FALLBACK CLASSIFIER ERROR ===');
+          console.error('Fallback error:', fallbackError);
+          
+          // Try without any model - basic analysis only
+          console.warn('All models failed, using basic analysis mode');
+          this.classifier = null;
+          progressCallback?.(80, 'Temel analiz modu aktif...');
         }
       }
 
       // Skip feature extractor on mobile for performance
-      if (!isMobile) {
+      if (!isMobile && this.classifier) {
         progressCallback?.(90, 'Özellik çikarici hazirlaniyor...');
         
         try {
+          console.log('Loading feature extractor...');
           this.featureExtractor = await pipeline('image-feature-extraction', this.config.model, {});
           console.log('Feature extractor loaded');
         } catch (featureError) {
@@ -116,29 +151,45 @@ export class VideoAnalysisService {
           this.featureExtractor = null;
         }
       } else {
-        console.log('Skipping feature extractor on mobile for performance');
+        console.log('Skipping feature extractor on mobile for performance or no classifier');
         this.featureExtractor = null;
       }
 
       progressCallback?.(100, 'Video analizi hazir!');
       this.isInitialized = true;
-      console.log('Video analysis service initialized successfully');
+      
+      console.log('=== INITIALIZATION SUCCESS ===');
+      console.log('Classifier available:', !!this.classifier);
+      console.log('Feature extractor available:', !!this.featureExtractor);
+      console.log('Mobile optimized:', isMobile);
       
     } catch (error) {
-      console.error('Video analysis service initialization failed:', error);
+      console.error('=== CRITICAL INITIALIZATION ERROR ===');
+      console.error('Error:', error);
+      console.error('Error type:', typeof error);
+      console.error('Error name:', error instanceof Error ? error.name : 'N/A');
+      console.error('Error message:', error instanceof Error ? error.message : String(error));
+      console.error('Error stack:', error instanceof Error ? error.stack : 'N/A');
       
       // Provide more specific error messages
       if (error instanceof Error) {
         if (error.message.includes('fetch')) {
+          console.error('Network error detected');
           throw new Error('Model indirilemedi - internet baglantinizi kontrol edin');
         } else if (error.message.includes('memory') || error.message.includes('size')) {
+          console.error('Memory error detected');
           throw new Error('Model için yetersiz bellek - uygulamayi yeniden baslatin');
         } else if (error.message.includes('timeout')) {
+          console.error('Timeout error detected');
           throw new Error('Model yüklemesi zaman asimina ugradi - tekrar deneyin');
+        } else if (error.message.includes('WebAssembly')) {
+          console.error('WebAssembly error detected');
+          throw new Error('WebAssembly desteklenmiyor - tarayicinizi güncelleyin');
         }
       }
       
-      throw new Error('Video analizi servisi yüklenemedi');
+      console.error('Unknown error, throwing generic message');
+      throw new Error('Video analizi servisi yüklenemedi: ' + (error instanceof Error ? error.message : String(error)));
     }
   }
 
