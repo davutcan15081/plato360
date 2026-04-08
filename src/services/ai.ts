@@ -288,7 +288,7 @@ export async function generateVideoEditScript(
     validateVideoAnalysis(settings);
     try {
       const videoService = await createVideoAnalysisService();
-      return await videoService.generateVideoEditScriptWithTransitions(videoBlob, duration, vibe, undefined, audioBlob);
+      return await videoService.generateVideoEditScript(videoBlob, duration, vibe, audioBlob);
     } catch (err) {
       const m = (err as Error).message ?? '';
       throw new Error(`Video analizi hatasý: ${m}`);
